@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lab Calendar Comprehensive Unit Test Suite</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; background: #f8f9fa; }
+    .card { background: white; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); max-width: 850px; margin: 0 auto; }
+    h1 { font-size: 20px; margin-bottom: 6px; color: #1a73e8; }
+    p.subtitle { font-size: 13px; color: #5f6368; margin-bottom: 18px; }
+    .test-result { padding: 8px 12px; margin-bottom: 6px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+    .pass { background: #e6f4ea; color: #137333; border-left: 4px solid #34a853; }
+    .fail { background: #fce8e6; color: #c5221f; border-left: 4px solid #ea4335; }
+    #summary { margin-top: 18px; font-weight: bold; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🧪 Lab Calendar Comprehensive Test Suite</h1>
+    <p class="subtitle">Validating Recurrence Series, Explicit Anchors, 3-Tier Shifting, DST Math & RFC 5545 Formatting</p>
+    <div id="results"></div>
+    <div id="summary">Running tests...</div>
+  </div>
+
+  <script type="module">
+    import {
+      formatDateKey,
+      parseDateKey,
+      shiftDateKey,
+      minutesToTime,
+      timeToMinutes,
+      snapToGrid,
+      getWeekDates,
+      computeEventLayout,
+      foldIcsLine,
+      getCategoryDefaultColor,
+      calculateDaysBetween,
+      escapeHtml
+    } from './js/utils.js';
+    import {
+      BUILT_IN_PROTOCOLS,
+      instantiateProtocol,
+      shiftProtocolGroup,
+      cascadeShiftProtocolSteps,
+      checkProtocolChainIntegrity
+    } from './js/protocols.js';
+    import { calculateQuotaStats, calculateWeeklyQuotaStats, DEFAULT_QUOTAS, getSuggestedQuotaDuration } from './js/quotas.js';
+    import { store } from './js/state.js';
+    import { encryptPayload, decryptPayload, SyncManager } from './js/sync.js';
+
+    const resultsEl = document.getElementById('results');
+    const summaryEl = document.getElementById('summary');
+    let passed = 0;
+    let failed = 0;
+
+    function assert(condition, message) {
+      const row = document.createElement('div');
+      if (condition) {
+        row.className = 'test-result pass';
+        row.textContent = `✓ PASS: ${message}`;
+        passed++;
+      } else {
+        row.className = 'test-result fail';
+        row.textContent = `✗ FAIL: ${message}`;
+        failed++;
+        console.error('Assertion failed:', message);
+      }
+      resultsEl.appendChild(row);
+    }
+
+    try {
+      // 1. Date math & DST-immune shifting
+      const d = parseDateKey('2026-10-24');
+      const shiftedAcrossDst = shiftDateKey('2026-10-24', 2); // Across Oct 25 DST change
+      assert(shiftedAcrossDst === '2026-10-26', 'shiftDateKey shifts accurately across October 25, 2026 DST transition');
+      assert(minutesToTime(570) === '09:30', 'minutesToTime(570) === "09:30"');
+      assert(timeToMinutes('09:30') === 570, 'timeToMinutes("09:30") === 570');
+
+      // 2. Week calculation (Monday - Sunday)
+      const weekDates = getWeekDates(new Date('2026-10-14'));
+      assert(weekDates.length === 7, 'Week contains 7 days');
+      assert(weekDates[0].getDay() === 1, 'First day is Monday');
+      assert(weekDates[6].getDay() === 0, 'Last day is Sunday');
+
+      // 3. Google Calendar collision layout with active/passive separation
+      const evts = [
+        { id: 'e1', startTime: '10:00', endTime: '12:00', stepType: 'active' },
+        { id: 'e2', startTime: '11:00', endTime: '13:00', stepType: 'active' },
+        { id: 'e3_passive', startTime: '10:00', endTime: '14:00', stepType: 'passive' }
+      ];
+      const layout = computeEventLayout(evts);
+      assert(layout.length === 3, 'Layout computes for 3 events');
+      const passiveItem = layout.find(i => i.id === 'e3_passive');
+      const activeItem1 = layout.find(i => i.id === 'e1');
+      assert(passiveItem.zIndex === 5 && passiveItem.isPassive === true, 'Passive step gets zIndex 5 backdrop layer');
+      assert(activeItem1.zIndex === 15 && activeItem1.totalCols === 2, 'Active overlapping items partition into columns at zIndex 15');
+
+      // Category color mapping
+      assert(getCategoryDefaultColor('Meeting') === 'emerald', 'Meeting category defaults to emerald');
+      assert(getCategoryDefaultColor('Instrumentation') === 'amber', 'Instrumentation category defaults to amber');
+      assert(getCategoryDefaultColor('Quota Task') === 'lavender', 'Quota Task category defaults to lavender');
+      assert(getCategoryDefaultColor('Bench Work') === 'ocean', 'Bench Work category defaults to ocean');
+      assert(getCategoryDefaultColor('Lab Operations') === 'rose', 'Lab Operations category defaults to rose');
+
+      // 4. Western Blot protocol instantiation (Unambiguous Anchors & Uniform Color)
+      const wbProto = BUILT_IN_PROTOCOLS.find(p => p.id === 'proto_western_blot');
+      assert(wbProto !== undefined, 'Western Blot protocol definition exists');
+      assert(wbProto.steps.length === 10, 'Western Blot contains 10 steps across 2 days');
+
+      const instantiated = instantiateProtocol(wbProto, '2026-10-15', 540); // 09:00 start on Oct 15
+      assert(instantiated.events.length === 10, 'Instantiated 10 event objects');
+      assert(instantiated.events.every(e => e.color === wbProto.color), 'All protocol steps inherit protocol theme color ("ocean")');
+      
+      const day1Steps = instantiated.events.filter(e => e.dateKey === '2026-10-15');
+      const day2Steps = instantiated.events.filter(e => e.dateKey === '2026-10-16');
+      assert(day1Steps.length === 7, 'Day 1 contains 7 steps');
+      assert(day2Steps.length === 3, 'Day 2 contains 3 steps');
+      assert(day2Steps[0].startTime === '09:00', 'Day 2 Step 8 is day-anchored to 09:00 AM');
+      assert(instantiated.events[5].stepType === 'passive', 'Blocking step is marked passive for hatched rendering');
+      assert(instantiated.events.every(e => e.protocolGroupId === instantiated.protocolGroupId), 'All 10 steps share protocolGroupId');
+
+      // 5. Shift entire protocol group (Shift + Drag)
+      const shiftedGroup = shiftProtocolGroup(instantiated.events, instantiated.protocolGroupId, 1, 30);
+      assert(shiftedGroup[0].dateKey === '2026-10-16', 'Shifted Day 1 step date to next day');
+      assert(shiftedGroup[7].dateKey === '2026-10-17', 'Shifted Day 2 step date to next day (+2 from original)');
+      assert(shiftedGroup[0].startTime === '09:30', 'Shifted start time by 30 mins');
+
+      // 6. Cascade shift downstream steps (Ctrl + Drag / Resize)
+      // If we delay step 3 (SDS-PAGE) by +30 min, steps 4..10 should push by +30 min, but steps 1..2 remain unchanged
+      const cascaded = cascadeShiftProtocolSteps(instantiated.events, instantiated.protocolGroupId, instantiated.events[2].id, 0, 30);
+      assert(cascaded[0].startTime === instantiated.events[0].startTime, 'Step 1 unchanged before cascade target');
+      assert(cascaded[1].startTime === instantiated.events[1].startTime, 'Step 2 unchanged before cascade target');
+      assert(timeToMinutes(cascaded[2].startTime) === timeToMinutes(instantiated.events[2].startTime) + 30, 'Target Step 3 delayed by 30m');
+      assert(timeToMinutes(cascaded[3].startTime) === timeToMinutes(instantiated.events[3].startTime) + 30, 'Downstream Step 4 delayed by 30m');
+      assert(timeToMinutes(cascaded[6].startTime) === timeToMinutes(instantiated.events[6].startTime) + 30, 'Downstream Step 7 delayed by 30m');
+
+      // 7. Chain integrity checking (Broken sequence detection)
+      const validChainWarnings = checkProtocolChainIntegrity(instantiated.events, instantiated.protocolGroupId);
+      assert(validChainWarnings.size === 0, 'No broken sequence warnings on freshly instantiated protocol');
+
+      // Now create an intentional conflict: step 2 starts before step 1 ends
+      const corruptedEvents = JSON.parse(JSON.stringify(instantiated.events));
+      corruptedEvents[1].startTime = '09:15'; // Step 1 ends at 10:00!
+      const brokenWarnings = checkProtocolChainIntegrity(corruptedEvents, instantiated.protocolGroupId);
+      assert(brokenWarnings.has(corruptedEvents[1].id), 'Correctly flagged step starting before predecessor ends');
+
+      // 8. Recurring Series + Exceptions Expansion
+      store.series = [
+        {
+          id: 's_test_meeting',
+          title: 'Weekly Lab Meeting',
+          rule: { freq: 'WEEKLY', byDay: ['WE'] },
+          startTime: '09:30',
+          endTime: '12:00',
+          from: '2026-10-01',
+          until: null,
+          color: 'emerald',
+          category: 'Meeting'
+        }
+      ];
+      store.exceptions = [
+        {
+          id: 'exc_test',
+          seriesId: 's_test_meeting',
+          occurrenceDate: '2026-10-14',
+          type: 'modified',
+          override: { startTime: '10:00', endTime: '12:30', title: 'Delayed Lab Meeting' }
+        }
+      ];
+
+      // Expand for Oct 7 (Wed) and Oct 14 (Wed)
+      const expandedRange = store.getExpandedEventsForRange(['2026-10-07', '2026-10-14', '2026-10-21']);
+      const oct7Evt = expandedRange.find(e => e.dateKey === '2026-10-07');
+      const oct14Evt = expandedRange.find(e => e.dateKey === '2026-10-14');
+      const oct21Evt = expandedRange.find(e => e.dateKey === '2026-10-21');
+
+      assert(oct7Evt && oct7Evt.startTime === '09:30', 'Oct 7 occurrence has regular 09:30 start');
+      assert(oct14Evt && oct14Evt.startTime === '10:00' && oct14Evt.title === 'Delayed Lab Meeting', 'Oct 14 occurrence has overridden 10:00 start via SeriesException');
+      assert(oct21Evt && oct21Evt.startTime === '09:30', 'Oct 21 occurrence is unaffected by Oct 14 exception');
+
+      // 9. Weekly Quota Tracking with Over-Scheduling
+      const quotaEvents = [
+        { id: 'q1', quotaId: 'quota_thesis', dateKey: '2026-10-13', startTime: '14:00', endTime: '16:00' }, // 2h
+        { id: 'q2', quotaId: 'quota_thesis', dateKey: '2026-10-15', startTime: '10:00', endTime: '13:00' }  // 3h (Total 5h out of 4h)
+      ];
+      const stats = calculateWeeklyQuotaStats(DEFAULT_QUOTAS, quotaEvents, new Date('2026-10-14'));
+      assert(stats['quota_thesis'].allocatedHours === 5, 'Thesis writing allocated hours is 5h');
+      assert(stats['quota_thesis'].percentage === 125, 'Thesis writing percentage reflects 125% over-scheduling');
+      assert(stats['quota_thesis'].isOverScheduled === true, 'isOverScheduled flag is true for over-scheduled quota');
+
+      // Suggested quota drop duration
+      const suggestedDur = getSuggestedQuotaDuration({ remainingMinutes: 45 });
+      assert(suggestedDur === 45, 'getSuggestedQuotaDuration returns remaining minutes when < 120');
+
+      // 10. RFC 5545 Line Folding at 75 octets
+      const longLine = 'SUMMARY:Very long descriptive title that exceeds the seventy-five octet limit in the standard specification for iCalendar';
+      const folded = foldIcsLine(longLine);
+      const lines = folded.split('\r\n');
+      assert(lines.length >= 2, 'foldIcsLine broke long line into multiple lines');
+      assert(lines[0].length <= 75, 'First line is <= 75 octets');
+      assert(lines[1].startsWith(' '), 'Subsequent folded lines begin with a space per RFC 5545');
+
+      // 11. Recurrent Series Occurrence Deletion ('this', 'following', 'all')
+      store.deleteSeriesOccurrence('s_test_meeting', '2026-10-14', 'this');
+      const expandedAfterDeleteThis = store.getExpandedEventsForRange(['2026-10-07', '2026-10-14', '2026-10-21']);
+      assert(!expandedAfterDeleteThis.find(e => e.dateKey === '2026-10-14'), 'Occurrence 2026-10-14 successfully cancelled in range');
+      assert(Boolean(expandedAfterDeleteThis.find(e => e.dateKey === '2026-10-07')), 'Occurrence 2026-10-07 remains active');
+      assert(Boolean(expandedAfterDeleteThis.find(e => e.dateKey === '2026-10-21')), 'Occurrence 2026-10-21 remains active');
+
+      // 12. Multi-Tier Quota Tracking & Linked Categories
+      const multiTierQuota = {
+        id: 'quota_ephys',
+        title: 'Electrophysiology Basics',
+        weeklyTarget: 3.0,
+        monthlyTarget: 12.0,
+        totalTarget: 45.0,
+        color: 'cyan',
+        categories: ['Instrumentation', 'Bench Work']
+      };
+      const ephysEvents = [
+        { id: 'ep1', category: 'Instrumentation', dateKey: '2026-10-13', startTime: '09:00', endTime: '11:00' }, // 2h (this week & month)
+        { id: 'ep2', category: 'Bench Work', dateKey: '2026-10-15', startTime: '13:00', endTime: '15:00' },       // 2h (this week & month)
+        { id: 'ep3', category: 'Instrumentation', dateKey: '2026-10-02', startTime: '10:00', endTime: '12:00' }, // 2h (earlier this month)
+        { id: 'ep4', category: 'Bench Work', dateKey: '2026-09-15', startTime: '10:00', endTime: '14:00' }        // 4h (last month, counts to total)
+      ];
+      const multiStats = calculateWeeklyQuotaStats([multiTierQuota], ephysEvents, new Date('2026-10-14'));
+      const qStat = multiStats['quota_ephys'];
+      assert(qStat.weeklyHours === 4.0, 'Multi-tier quota weekly hours sums 4.0h from linked categories');
+      assert(qStat.monthlyHours === 6.0, 'Multi-tier quota monthly hours sums 6.0h for current month');
+      assert(qStat.totalHours === 10.0, 'Multi-tier quota total hours sums 10.0h all-time across linked categories');
+      assert(qStat.weeklyPercentage === 133, 'Multi-tier quota weekly percentage is 133% (over-scheduled)');
+      assert(qStat.isWeeklyOver === true, 'isWeeklyOver flag is true');
+
+      // 13. Quick Event Classes and Categories State Management
+      const initialClassesCount = store.quickClasses.length;
+      store.addQuickClass({ id: 'qc_test', title: 'Test Rig Setup', duration: 45, category: 'Instrumentation', color: 'amber' });
+      assert(store.quickClasses.length === initialClassesCount + 1, 'addQuickClass adds class');
+      store.updateQuickClass('qc_test', { title: 'Test Rig Calibrated', duration: 60 });
+      assert(store.quickClasses.find(c => c.id === 'qc_test')?.title === 'Test Rig Calibrated', 'updateQuickClass updates class');
+      store.deleteQuickClass('qc_test');
+      assert(store.quickClasses.length === initialClassesCount, 'deleteQuickClass removes class');
+
+      // 14. Passive Step Underlay Collision Flag
+      const activeOverPassiveEvts = [
+        { id: 'p_block', startTime: '10:00', endTime: '14:00', stepType: 'passive' },
+        { id: 'a_run', startTime: '11:00', endTime: '12:30', stepType: 'active' }
+      ];
+      const activePassiveLayout = computeEventLayout(activeOverPassiveEvts);
+      const activeCardLayout = activePassiveLayout.find(i => i.id === 'a_run');
+      assert(activeCardLayout.overlapsPassive === true, 'Active event overlapping passive step gets overlapsPassive = true for left-gap ribbon');
+
+      // 15. Delete Sample / Built-In Protocol Support
+      const allProtocolsInitial = store.getAllProtocols();
+      const hasWesternBlotInitial = allProtocolsInitial.some(p => p.id === 'proto_western_blot');
+      assert(hasWesternBlotInitial === true, 'Built-in Western Blot protocol is present in initial library');
+      store.deleteProtocol('proto_western_blot');
+      const allProtocolsAfterDelete = store.getAllProtocols();
+      const hasWesternBlotAfterDelete = allProtocolsAfterDelete.some(p => p.id === 'proto_western_blot');
+      assert(hasWesternBlotAfterDelete === false, 'deleteProtocol removes built-in Western Blot from getAllProtocols');
+      assert(store.deletedProtocolIds.has('proto_western_blot'), 'store.deletedProtocolIds tracks deleted protocol ID');
+      // Undo deletion
+      store.undo();
+      const allProtocolsAfterUndo = store.getAllProtocols();
+      assert(allProtocolsAfterUndo.some(p => p.id === 'proto_western_blot'), 'store.undo() restores deleted built-in protocol');
+
+      // 16. Flexible Quotas (Single-Tier vs Multi-Tier Targets)
+      const weeklyOnlyQuota = {
+        id: 'q_aliquot',
+        title: 'Aliquot Restocking',
+        weeklyTarget: 2.0,
+        monthlyTarget: null,
+        totalTarget: null,
+        categories: ['Lab Operations']
+      };
+      const monthlyOnlyQuota = {
+        id: 'q_inventory',
+        title: 'Chemical Inventory',
+        weeklyTarget: null,
+        monthlyTarget: 8.0,
+        totalTarget: null,
+        categories: ['Lab Operations']
+      };
+      const flexibleStats = calculateQuotaStats([weeklyOnlyQuota, monthlyOnlyQuota], [], new Date('2026-10-14'));
+      assert(flexibleStats['q_aliquot'].hasWeekly === true, 'Aliquot quota hasWeekly is true');
+      assert(flexibleStats['q_aliquot'].hasMonthly === false, 'Aliquot quota hasMonthly is false');
+      assert(flexibleStats['q_aliquot'].hasTotal === false, 'Aliquot quota hasTotal is false');
+      assert(flexibleStats['q_inventory'].hasWeekly === false, 'Inventory quota hasWeekly is false');
+      assert(flexibleStats['q_inventory'].hasMonthly === true, 'Inventory quota hasMonthly is true');
+      assert(flexibleStats['q_inventory'].hasTotal === false, 'Inventory quota hasTotal is false');
+
+      // 17. calculateDaysBetween & escapeHtml Helpers
+      assert(calculateDaysBetween('2026-10-12', '2026-10-15') === 3, 'calculateDaysBetween("2026-10-12", "2026-10-15") === 3');
+      assert(calculateDaysBetween('2026-10-12', '2026-10-12') === 0, 'calculateDaysBetween same day === 0');
+      assert(escapeHtml('<script>alert("x")&</script>') === '&lt;script&gt;alert(&quot;x&quot;)&amp;&lt;/script&gt;', 'escapeHtml sanitizes HTML entities safely');
+
+      // 18. Zero-Knowledge AES-GCM-256 E2EE Encryption & Decryption
+      const testSecretPayload = {
+        title: 'Proprietary Cas9 Cleavage Assay',
+        notes: 'Secret guide RNA sequence: 5-AUGCAUGC-3',
+        events: [{ id: 'evt_secret_1', time: '14:00' }]
+      };
+      const passphrase = 'MyLabSecretKey!2026';
+      const encrypted = await encryptPayload(testSecretPayload, passphrase);
+      assert(encrypted.isEncrypted === true, 'Payload is marked isEncrypted: true');
+      assert(Boolean(encrypted.ciphertextHex && encrypted.saltHex && encrypted.ivHex), 'Payload contains ciphertextHex, saltHex, ivHex');
+      assert(!encrypted.ciphertextHex.includes('Proprietary'), 'Ciphertext does not expose plaintext words');
+
+      // Decrypt with correct passphrase
+      const decrypted = await decryptPayload(encrypted, passphrase);
+      assert(decrypted.title === testSecretPayload.title, 'Decrypted payload matches original secret title');
+      assert(decrypted.notes === testSecretPayload.notes, 'Decrypted notes match original secret sequence');
+
+      // Decrypt with incorrect passphrase throws error
+      let caughtError = false;
+      try {
+        await decryptPayload(encrypted, 'WrongPassword123');
+      } catch (err) {
+        caughtError = true;
+      }
+      assert(caughtError === true, 'Decryption with wrong passphrase correctly throws Error');
+
+      // Plaintext passthrough when no passphrase is set
+      const unencrypted = await encryptPayload(testSecretPayload, '');
+      assert(unencrypted.isEncrypted === false, 'Passphrase-less payload is marked isEncrypted: false');
+      const decryptedPlain = await decryptPayload(unencrypted, '');
+      assert(decryptedPlain.title === testSecretPayload.title, 'Passphrase-less payload roundtrips intact');
+
+      // 19. SyncManager Client State Transitions
+      const testSyncManager = new SyncManager(store);
+      assert(testSyncManager.status === 'local_only', 'SyncManager defaults to local_only status');
+      assert(testSyncManager.isConnected() === false, 'SyncManager isConnected() is false before credentials configured');
+      let capturedStatus = null;
+      testSyncManager.onStatusChange((st) => { capturedStatus = st; });
+      testSyncManager.setStatus('syncing', 'Sync in progress');
+      assert(capturedStatus === 'syncing', 'SyncManager dispatches status change events to listeners');
+
+      summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
+      summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
+      window.__TESTS_PASSED__ = (failed === 0);
+      localStorage.removeItem('lab_calendar_data_v2');
+    } catch (e) {
+      summaryEl.textContent = `Error in test suite: ${e.message}`;
+      summaryEl.style.color = '#c5221f';
+      console.error(e);
+      window.__TESTS_PASSED__ = false;
+    }
+  </script>
+</body>
+</html>

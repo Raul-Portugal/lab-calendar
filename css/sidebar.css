@@ -1,0 +1,557 @@
+/**
+ * Lab Calendar - Sidebar Styling
+ * Google Calendar Style: Mini Month Picker, Draggable Quota Cards, Protocol Library
+ */
+
+.app-sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  border-right: 1px solid var(--google-grey-200);
+  background-color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 16px 12px;
+  gap: 20px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease, width 0.2s ease;
+  user-select: none;
+}
+
+.app-sidebar.collapsed {
+  transform: translateX(-100%);
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-right: none;
+}
+
+/* Primary Action Button Dropdown (+ Create) */
+.create-action-wrapper {
+  position: relative;
+}
+
+.btn-create-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px 10px 14px;
+  border-radius: var(--radius-pill);
+  background-color: #ffffff;
+  border: 1px solid var(--google-grey-200);
+  box-shadow: 0 1px 3px 0 rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--google-grey-800);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.btn-create-main:hover {
+  box-shadow: 0 2px 6px 0 rgba(60,64,67,0.3), 0 6px 10px 4px rgba(60,64,67,0.15);
+  background-color: #fafafa;
+}
+
+.create-plus-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.create-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 220px;
+  background: #ffffff;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--google-grey-200);
+  padding: 6px 0;
+  z-index: 200;
+}
+
+.create-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--google-grey-800);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.create-menu-item:hover {
+  background-color: var(--google-grey-100);
+}
+
+.create-menu-item svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--google-grey-700);
+}
+
+/* Mini Calendar Widget */
+.mini-calendar-widget {
+  background: #ffffff;
+}
+
+.mini-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+}
+
+.mini-cal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--google-grey-800);
+}
+
+.mini-cal-nav {
+  display: flex;
+  gap: 2px;
+}
+
+.mini-cal-nav-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--google-grey-700);
+}
+.mini-cal-nav-btn:hover {
+  background-color: var(--google-grey-100);
+}
+
+.mini-cal-days-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+}
+
+.mini-day-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--google-grey-500);
+  padding: 4px 0;
+}
+
+.mini-date-cell {
+  font-size: 11px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--google-grey-800);
+  transition: all 0.1s ease;
+}
+
+.mini-date-cell:hover {
+  background-color: var(--google-grey-200);
+}
+
+.mini-date-cell.other-month {
+  color: var(--google-grey-500);
+  opacity: 0.5;
+}
+
+.mini-date-cell.is-selected {
+  background-color: var(--google-blue-light);
+  color: var(--google-blue);
+  font-weight: 600;
+}
+
+.mini-date-cell.is-today {
+  background-color: var(--google-blue);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* Sidebar Sections */
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.sidebar-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--google-grey-700);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-badge {
+  background-color: var(--google-grey-200);
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--google-grey-800);
+}
+
+.section-action-btn {
+  background: transparent;
+  border: none;
+  font-size: 11px;
+  color: var(--google-blue);
+  font-weight: 500;
+  cursor: pointer;
+}
+.section-action-btn:hover {
+  text-decoration: underline;
+}
+
+/* Draggable Weekly Quotas */
+.quota-card {
+  background-color: #ffffff;
+  border: 1px solid var(--google-grey-200);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  cursor: grab;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.quota-card:hover {
+  border-color: var(--color-lavender-border);
+  box-shadow: 0 2px 6px rgba(107, 33, 168, 0.15);
+  transform: translateY(-1px);
+}
+
+.quota-card.is-dragging-source {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.quota-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.quota-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--google-grey-900);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quota-drag-handle {
+  color: var(--google-grey-500);
+  font-size: 12px;
+}
+
+.quota-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--google-grey-700);
+  margin-bottom: 6px;
+}
+
+.quota-progress-track {
+  height: 6px;
+  background-color: var(--google-grey-200);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.quota-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #9334ea, #1a73e8);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.quota-progress-bar.is-complete {
+  background: var(--google-green);
+}
+
+.quota-progress-bar.is-over {
+  background: linear-gradient(90deg, #ea4335, #fbbc04);
+}
+
+.quota-stats.is-over-text {
+  color: #b06000;
+  font-weight: 600;
+}
+
+/* Protocol Cards */
+.protocol-card {
+  background-color: #ffffff;
+  border: 1px solid var(--google-grey-200);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  cursor: grab;
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.protocol-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.protocol-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--google-grey-700);
+  font-size: 11px;
+}
+.protocol-action-btn:hover {
+  background: var(--google-grey-100);
+  color: var(--google-blue);
+}
+
+.protocol-card:hover {
+  border-color: var(--google-blue);
+  box-shadow: 0 2px 6px rgba(26, 115, 232, 0.15);
+  transform: translateY(-1px);
+}
+
+.protocol-card.is-dragging-source {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.protocol-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.protocol-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--google-grey-900);
+}
+
+.protocol-days-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: var(--google-grey-100);
+  color: var(--google-grey-700);
+}
+
+.protocol-card-meta {
+  font-size: 11px;
+  color: var(--google-grey-700);
+}
+
+/* Quick Event Classes (Chips) */
+.event-classes-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-class-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--google-grey-200);
+  background-color: #ffffff;
+  cursor: grab;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.event-class-chip:hover {
+  border-color: var(--google-grey-500);
+  background-color: var(--google-grey-50);
+}
+
+.chip-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chip-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.event-class-chip:hover .chip-actions {
+  display: inline-flex;
+}
+
+.chip-btn {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: var(--google-grey-700);
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.chip-btn:hover {
+  background-color: var(--google-grey-200);
+  color: var(--google-grey-900);
+}
+
+/* Visibility Filters */
+.category-filters-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--google-grey-800);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.filter-item:hover {
+  background-color: var(--google-grey-50);
+}
+
+.filter-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.filter-item:hover .filter-actions {
+  display: flex;
+}
+
+.filter-action-btn {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: var(--google-grey-700);
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: 2px;
+}
+
+.filter-action-btn:hover {
+  background-color: var(--google-grey-200);
+  color: var(--google-grey-900);
+}
+
+.filter-checkbox {
+  accent-color: var(--google-blue);
+  cursor: pointer;
+}
+
+/* Quota Multi-target tags & actions */
+.quota-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.quota-card:hover .quota-actions {
+  display: flex;
+}
+
+.quota-action-btn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--google-grey-700);
+  cursor: pointer;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.quota-action-btn:hover {
+  background-color: var(--google-grey-200);
+  color: var(--google-grey-900);
+}
+
+.quota-categories-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.quota-category-tag {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background-color: var(--google-grey-100);
+  color: var(--google-grey-700);
+}
+
+.quota-multi-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.quota-metric-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quota-metric-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--google-grey-700);
+}

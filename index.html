@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LabCal - Biology & Research Calendar</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="theme-color" content="#1a73e8">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="LabCal">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/calendar.css">
+  <link rel="stylesheet" href="css/sidebar.css">
+  <link rel="stylesheet" href="css/modal.css">
+</head>
+<body>
+  <!-- Top Application Header (Google Calendar Style) -->
+  <header class="app-header">
+    <div class="header-left">
+      <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+          <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+        </svg>
+      </button>
+
+      <a href="#" class="app-logo">
+        <div class="app-logo-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>
+          </svg>
+        </div>
+        <div class="app-logo-text">Lab<span>Cal</span></div>
+      </a>
+
+      <div class="nav-controls">
+        <button class="btn btn-outline" id="todayBtn">Today</button>
+        <button class="icon-btn" id="prevBtn" title="Previous">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </button>
+        <button class="icon-btn" id="nextBtn" title="Next">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+        </button>
+        <div class="current-date-title" id="currentDateTitle">October 2026</div>
+      </div>
+    </div>
+
+    <div class="header-middle">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <input type="text" id="searchInput" placeholder="Search events, protocols, or bench notes..." autocomplete="off">
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="view-selector">
+        <button class="view-btn" data-view="day">Day</button>
+        <button class="view-btn active" data-view="week">Week</button>
+        <button class="view-btn" data-view="month">Month</button>
+      </div>
+
+      <button class="icon-btn" id="undoBtn" title="Undo (Ctrl+Z)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
+      </button>
+
+      <button class="icon-btn" id="redoBtn" title="Redo (Ctrl+Y)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg>
+      </button>
+
+      <button class="btn btn-primary" id="directGcalBtn" title="Direct 1-Click Export to Google Calendar format (.ics)">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        Export to GCal (.ics)
+      </button>
+
+      <button class="btn btn-outline" id="cloudSyncBtn" title="Cloud Sync & Multi-Device Settings">
+        <span class="sync-dot sync-dot-local" id="cloudSyncIndicator"></span>
+        <span id="cloudSyncLabel">Cloud Sync</span>
+      </button>
+
+      <button class="install-pwa-btn hidden" id="installPwaBtn" title="Install LabCal on this device">
+        📲 Install App
+      </button>
+
+      <div class="export-dropdown-wrapper">
+        <button class="btn btn-outline" id="exportMenuBtn">
+          More ▾
+        </button>
+        <div class="create-menu-dropdown hidden" id="exportDropdown">
+          <div class="create-menu-item" id="exportIcsBtn">
+            <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"/></svg>
+            Export iCalendar (.ics)
+          </div>
+          <div class="create-menu-item" id="exportJsonBtn">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            Export Full Backup (.json)
+          </div>
+          <div class="create-menu-item" id="importJsonTriggerBtn">
+            <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+            Import Backup (.json)
+          </div>
+        </div>
+      </div>
+      <input type="file" id="jsonFileInput" accept=".json" class="hidden">
+    </div>
+  </header>
+
+  <!-- Application Main Area -->
+  <main class="app-main">
+    <!-- Left Sidebar -->
+    <aside class="app-sidebar" id="appSidebar">
+      <!-- Create Action Button -->
+      <div class="create-action-wrapper">
+        <button class="btn-create-main" id="createMainBtn">
+          <svg class="create-plus-icon" viewBox="0 0 36 36">
+            <path fill="#4285F4" d="M16 16v14h4V16h14v-4H20V-2h-4v14H2v4z"/>
+            <path fill="#34A853" d="M30 16H20l-4-4h14z"/>
+            <path fill="#FBBC05" d="M6 16h10l4-4H6z"/>
+            <path fill="#EA4335" d="M20 16v14l-4-4V16z"/>
+          </svg>
+          Create
+        </button>
+        <div class="create-menu-dropdown hidden" id="createDropdown">
+          <div class="create-menu-item" id="createEventOption">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            New Calendar Event
+          </div>
+          <div class="create-menu-item" id="createProtocolOption">
+            <svg viewBox="0 0 24 24"><path d="M19 19v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1l4-5V8a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1v6l4 5z"/></svg>
+            Build Custom Protocol
+          </div>
+          <div class="create-menu-item" id="createQuotaOption">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+            Add Weekly Quota Goal
+          </div>
+        </div>
+      </div>
+
+      <!-- Mini Calendar Datepicker Widget -->
+      <div class="mini-calendar-widget" id="miniCalendarWidget"></div>
+
+      <!-- Weekly Quotas & Flexible Tasks Section -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">
+            <span>Weekly Quotas</span>
+            <span class="section-badge" id="quotaCountBadge">3</span>
+          </div>
+          <button class="section-action-btn" id="addQuotaLinkBtn">+ Add</button>
+        </div>
+        <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
+          Drag into calendar to allocate hours. Progress updates dynamically.
+        </p>
+        <div class="quotas-list" id="sidebarQuotasList"></div>
+      </div>
+
+      <!-- Protocol Templates Library Section -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">
+            <span>Lab Protocols</span>
+            <span class="section-badge" id="protocolCountBadge">4</span>
+          </div>
+          <button class="section-action-btn" id="buildProtocolLinkBtn">+ Build</button>
+        </div>
+        <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
+          Drag to schedule all chained multi-day steps. Hold Shift to move group.
+        </p>
+        <div class="protocols-list" id="sidebarProtocolsList"></div>
+      </div>
+
+      <!-- Quick Event Classes (Single Drag Chips) -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">Quick Event Classes</div>
+          <button class="section-action-btn" id="addQuickClassLinkBtn">+ New</button>
+        </div>
+        <div class="event-classes-grid" id="sidebarEventClassesGrid"></div>
+      </div>
+
+      <!-- Category Filter Toggles -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <div class="sidebar-section-title">Filter Calendars</div>
+          <button class="section-action-btn" id="addCategoryLinkBtn">+ New</button>
+        </div>
+        <div class="category-filters-list" id="sidebarCategoryFilters"></div>
+      </div>
+    </aside>
+
+    <!-- Calendar Viewport -->
+    <div class="cal-container" id="calendarContainer"></div>
+  </main>
+
+  <!-- Event Edit / View Modal -->
+  <div class="modal-backdrop hidden" id="eventEditModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="eventModalTitle">Edit Event</h3>
+        <button class="modal-close-btn" id="eventModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editEventId">
+
+        <div class="form-group full-width">
+          <label>Event Title</label>
+          <input type="text" class="input-text" id="editEventTitle" placeholder="e.g. SDS-PAGE Run">
+        </div>
+
+        <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="editEventIsAllDay" style="cursor: pointer; width: 15px; height: 15px; accent-color: var(--google-blue);">
+          <label for="editEventIsAllDay" style="font-size: 13px; font-weight: 500; cursor: pointer; user-select: none;">All day / Multi-day banner event</label>
+        </div>
+
+        <div class="form-row-3" id="editEventTimeRow">
+          <div class="form-group">
+            <label>Date</label>
+            <input type="date" class="input-text" id="editEventDate">
+          </div>
+          <div class="form-group">
+            <label>Start Time</label>
+            <input type="time" class="input-text" id="editEventStartTime" step="900">
+          </div>
+          <div class="form-group">
+            <label>End Time</label>
+            <input type="time" class="input-text" id="editEventEndTime" step="900">
+          </div>
+        </div>
+
+        <div class="form-row-2 hidden" id="editEventDateRangeRow">
+          <div class="form-group">
+            <label>Start Date</label>
+            <input type="date" class="input-text" id="editEventStartDate">
+          </div>
+          <div class="form-group">
+            <label>End Date</label>
+            <input type="date" class="input-text" id="editEventEndDate">
+          </div>
+        </div>
+
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Category</label>
+            <select class="input-select" id="editEventCategory">
+              <option value="Meeting">Meeting (Green)</option>
+              <option value="Protocol">Protocol (Blue)</option>
+              <option value="Bench Work">Bench Work (Blue)</option>
+              <option value="Quota Task">Cognitive / Quota Task (Purple)</option>
+              <option value="Instrumentation">Instrumentation (Orange)</option>
+              <option value="Lab Operations">Lab Operations (Pink)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Color Accent</label>
+            <select class="input-select" id="editEventColor">
+              <option value="ocean">Ocean Blue</option>
+              <option value="emerald">Emerald Green</option>
+              <option value="lavender">Lavender Purple</option>
+              <option value="amber">Amber Orange</option>
+              <option value="rose">Rose Pink</option>
+              <option value="cyan">Cyan Teal</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group full-width" id="protocolInfoBanner"></div>
+
+        <div class="form-group full-width">
+          <label>Bench Notes & Reagents</label>
+          <textarea class="input-textarea" id="editEventNotes" rows="3" placeholder="Reagents, equipment booked, antibody dilutions, incubation temps..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="modalSplitBtn">Split</button>
+        <button type="button" class="btn btn-outline" id="modalDuplicateBtn">Duplicate</button>
+        <button type="button" class="btn btn-outline" style="color:var(--google-red); border-color:#fce8e6;" id="modalDeleteBtn">Delete</button>
+        <button type="button" class="btn btn-primary" id="modalSaveBtn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interactive Protocol Builder Modal -->
+  <div class="modal-backdrop hidden" id="protocolBuilderModal">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <h3 class="modal-title">Protocol Builder & Timeline Sequencer</h3>
+        <button class="modal-close-btn" id="protoBuildCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row-3">
+          <div class="form-group" style="grid-column: span 2;">
+            <label>Protocol Name</label>
+            <input type="text" class="input-text" id="protoBuildName" placeholder="e.g. Immunofluorescence Staining (2 Days)">
+          </div>
+          <div class="form-group">
+            <label>Theme Color</label>
+            <select class="input-select" id="protoBuildColor">
+              <option value="ocean">Ocean Blue</option>
+              <option value="emerald">Emerald Green</option>
+              <option value="lavender">Lavender Purple</option>
+              <option value="amber">Amber Orange</option>
+              <option value="rose">Rose Pink</option>
+              <option value="cyan">Cyan Teal</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Category</label>
+            <input type="text" class="input-text" id="protoBuildCategory" value="Molecular Biology">
+          </div>
+          <div class="form-group">
+            <label>Description / Overview</label>
+            <input type="text" class="input-text" id="protoBuildDesc" placeholder="Brief protocol objective or reference">
+          </div>
+        </div>
+
+        <!-- Live Visual Timeline Preview -->
+        <div class="proto-timeline-preview-container">
+          <div class="timeline-preview-heading">Sequential Execution Timeline Preview</div>
+          <div id="protoBuildTimelinePreview"></div>
+        </div>
+
+        <!-- Steps List Section -->
+        <div class="proto-steps-section">
+          <div class="proto-steps-header">
+            <label style="font-size: 12px; font-weight:700;">Protocol Steps & Gaps</label>
+            <button type="button" class="btn btn-secondary btn-sm" id="protoBuildAddStepBtn">+ Add Step</button>
+          </div>
+          <div id="protoBuildStepsList" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="protoBuildCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="protoBuildSaveBtn">Save Protocol to Library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Weekly / Monthly / Total Quota Goal Setup & Edit Modal -->
+  <div class="modal-backdrop hidden" id="quotaCreatorModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="quotaModalTitle">Goal & Quota Setup</h3>
+        <button class="modal-close-btn" id="quotaModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="quotaEditId">
+        <div class="form-group full-width">
+          <label>Goal Title</label>
+          <input type="text" class="input-text" id="quotaTitleInput" placeholder="e.g. Electrophysiology Basics, Thesis Writing, Deep Work">
+        </div>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label>Weekly Target (h)</label>
+            <input type="number" class="input-text" id="quotaWeeklyHoursInput" placeholder="e.g. 4.0 (optional)" step="0.5" min="0" max="168">
+          </div>
+          <div class="form-group">
+            <label>Monthly Target (h)</label>
+            <input type="number" class="input-text" id="quotaMonthlyHoursInput" placeholder="e.g. 16.0 (optional)" step="0.5" min="0" max="720">
+          </div>
+          <div class="form-group">
+            <label>Total Goal (h)</label>
+            <input type="number" class="input-text" id="quotaTotalHoursInput" placeholder="e.g. 300 (optional)" step="1" min="0" max="5000">
+          </div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Color Accent</label>
+            <select class="input-select" id="quotaColorSelect">
+              <option value="lavender">Lavender Purple</option>
+              <option value="ocean">Ocean Blue</option>
+              <option value="emerald">Emerald Green</option>
+              <option value="amber">Amber Orange</option>
+              <option value="rose">Rose Pink</option>
+              <option value="cyan">Cyan Teal</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Link Across Categories (Optional)</label>
+            <div id="quotaCategoriesCheckboxes" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;"></div>
+          </div>
+        </div>
+        <div class="form-group full-width">
+          <label>Description / Notes</label>
+          <input type="text" class="input-text" id="quotaDescInput" placeholder="Techniques, objectives, milestones...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="quotaCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="quotaSaveBtn">Save Goal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Event Class Edit / Create Modal -->
+  <div class="modal-backdrop hidden" id="quickClassModal">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="quickClassModalTitle">Quick Event Class</h3>
+        <button class="modal-close-btn" id="quickClassModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="quickClassEditId">
+        <div class="form-group full-width">
+          <label>Class Title</label>
+          <input type="text" class="input-text" id="quickClassTitleInput" placeholder="e.g. Patch Clamp, Western Blot Preparation">
+        </div>
+        <div class="form-row-2">
+          <div class="form-group">
+            <label>Default Duration (Minutes)</label>
+            <input type="number" class="input-text" id="quickClassDurationInput" value="60" step="15" min="15" max="720">
+          </div>
+          <div class="form-group">
+            <label>Category</label>
+            <select class="input-select" id="quickClassCategorySelect"></select>
+          </div>
+        </div>
+        <div class="form-group full-width">
+          <label>Color Accent</label>
+          <select class="input-select" id="quickClassColorSelect">
+            <option value="ocean">Ocean Blue</option>
+            <option value="emerald">Emerald Green</option>
+            <option value="lavender">Lavender Purple</option>
+            <option value="amber">Amber Orange</option>
+            <option value="rose">Rose Pink</option>
+            <option value="cyan">Cyan Teal</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="quickClassCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="quickClassSaveBtn">Save Class</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Calendar Category / Filter Edit / Create Modal -->
+  <div class="modal-backdrop hidden" id="categoryModal">
+    <div class="modal-dialog" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="categoryModalTitle">Calendar Category</h3>
+        <button class="modal-close-btn" id="categoryModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="categoryEditOldName">
+        <div class="form-group full-width">
+          <label>Category Name</label>
+          <input type="text" class="input-text" id="categoryNameInput" placeholder="e.g. Teaching, Computational, Clinical">
+        </div>
+        <div class="form-group full-width">
+          <label>Color Accent</label>
+          <select class="input-select" id="categoryColorSelect">
+            <option value="ocean">Ocean Blue</option>
+            <option value="emerald">Emerald Green</option>
+            <option value="lavender">Lavender Purple</option>
+            <option value="amber">Amber Orange</option>
+            <option value="rose">Rose Pink</option>
+            <option value="cyan">Cyan Teal</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="categoryCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="categorySaveBtn">Save Category</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Quick Create Popover (GCal style) -->
+  <div class="quick-create-popover hidden" id="quickCreatePopover">
+    <div class="popover-header">
+      <input type="text" class="popover-title-input" id="popoverTitleInput" placeholder="Add title" autocomplete="off">
+      <button class="popover-close-btn" id="popoverCloseBtn" title="Close (Esc)">✕</button>
+    </div>
+    <div class="popover-body">
+      <div class="popover-time-row">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+        <span id="popoverTimeLabel">10:00 AM – 11:00 AM</span>
+      </div>
+      <div class="popover-controls-row">
+        <select class="input-select popover-select" id="popoverCategorySelect"></select>
+      </div>
+    </div>
+    <div class="popover-footer">
+      <button type="button" class="btn btn-outline btn-sm" id="popoverMoreOptionsBtn">More options</button>
+      <button type="button" class="btn btn-primary btn-sm" id="popoverSaveBtn">Save</button>
+    </div>
+  </div>
+
+  <!-- Recurring Series Occurrence Edit Prompt Modal -->
+  <div class="modal-backdrop hidden" id="seriesPromptModal">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="seriesPromptTitle">Edit Recurring Event</h3>
+        <button class="modal-close-btn" id="seriesPromptCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--google-grey-800); margin-bottom: 8px;" id="seriesPromptDescription">
+          This is an occurrence of a recurring series. How would you like to apply your changes?
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 6px;">
+          <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer;">
+            <input type="radio" name="seriesEditScope" value="this" checked style="margin-top: 3px;">
+            <div>
+              <strong>This occurrence only</strong>
+              <div style="font-size: 11px; color: var(--google-grey-700);">Changes apply only to this specific date.</div>
+            </div>
+          </label>
+          <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer;">
+            <input type="radio" name="seriesEditScope" value="following" style="margin-top: 3px;">
+            <div>
+              <strong>This and all following events</strong>
+              <div style="font-size: 11px; color: var(--google-grey-700);">Applies changes from this date forward.</div>
+            </div>
+          </label>
+          <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; cursor: pointer;">
+            <input type="radio" name="seriesEditScope" value="all" style="margin-top: 3px;">
+            <div>
+              <strong>All events in series</strong>
+              <div style="font-size: 11px; color: var(--google-grey-700);">Modifies every occurrence across the calendar.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="seriesPromptCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="seriesPromptConfirmBtn">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right-Click Context Menu -->
+  <div class="context-menu hidden" id="eventContextMenu">
+    <div class="context-menu-item" data-action="edit">
+      <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      Edit Details...
+    </div>
+    <div class="context-menu-item" data-action="split">
+      <svg viewBox="0 0 24 24"><path d="M19 15v4H5v-4h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zm-1-8V9H5V5h14m1-2H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1z"/></svg>
+      Split in Half
+    </div>
+    <div class="context-menu-item" data-action="duplicate">
+      <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+      Duplicate
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" data-action="shift-group">
+      <svg viewBox="0 0 24 24"><path d="M10 9h4V6h3l-5-5-5 5h3v3zm-1 1H6V7l-5 5 5 5v-3h3v-4zm14 2l-5-5v3h-3v4h3v3l5-5zm-9 3h-4v3H7l5 5 5-5h-3v-3z"/></svg>
+      Shift Entire Protocol Run...
+    </div>
+    <div class="context-menu-item" data-action="cascade-shift">
+      <svg viewBox="0 0 24 24"><path d="M16 13h-3V3h-2v10H8l4 4 4-4zM4 19v2h16v-2H4z"/></svg>
+      Cascade Downstream Steps...
+    </div>
+    <div class="context-menu-item danger-item" data-action="delete-group">
+      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      Delete Entire Protocol Run
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item danger-item" data-action="delete">
+      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      Delete Event
+    </div>
+  </div>
+
+  <!-- Hidden File Input for Single Protocol Import -->
+  <input type="file" id="protocolFileInput" accept=".json,.protocol.json" class="hidden">
+
+  <!-- Cloud Sync & Multi-Device Setup Modal -->
+  <div class="modal-overlay hidden" id="cloudSyncModal">
+    <div class="modal-card" style="max-width: 580px;">
+      <div class="modal-header">
+        <div class="modal-title">☁️ Multi-Device Cloud Sync</div>
+        <button class="modal-close-btn" id="cloudSyncCloseBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Live Connection Status Card -->
+        <div class="sync-status-card" id="syncStatusCard">
+          <div class="sync-status-info">
+            <span class="sync-dot sync-dot-local" id="syncModalStatusDot"></span>
+            <div>
+              <div class="sync-status-text" id="syncModalStatusText">Local Storage Only</div>
+              <div class="sync-status-subtext" id="syncModalStatusSubtext">Not connected to cloud</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary hidden" id="syncNowBtn" style="padding: 6px 12px; font-size:12px;">Sync Now</button>
+            <button class="btn btn-outline hidden" id="signOutBtn" style="padding: 6px 12px; font-size:12px;">Disconnect</button>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="sync-tabs-nav">
+          <button class="sync-tab-btn active" data-tab="account" id="tabAccountBtn">Account & Login</button>
+          <button class="sync-tab-btn" data-tab="config" id="tabConfigBtn">Database & Privacy (E2EE)</button>
+          <button class="sync-tab-btn" data-tab="guide" id="tabGuideBtn">60s Setup Guide</button>
+        </div>
+
+        <!-- Tab 1: Account Login / Signup -->
+        <div id="syncTabAccount">
+          <div id="authFormsContainer">
+            <div class="modal-form-row">
+              <label class="modal-label">Email Address</label>
+              <input type="email" class="modal-input" id="syncEmailInput" placeholder="scientist@university.edu">
+            </div>
+            <div class="modal-form-row">
+              <label class="modal-label">Password</label>
+              <input type="password" class="modal-input" id="syncPasswordInput" placeholder="••••••••••••">
+            </div>
+            <div style="display:flex; gap:10px; margin-top:14px;">
+              <button class="btn btn-primary" id="signInBtn" style="flex:1;">Sign In</button>
+              <button class="btn btn-outline" id="signUpBtn" style="flex:1;">Create Account</button>
+            </div>
+          </div>
+          <div id="authLoggedInView" class="hidden" style="padding:14px 0; text-align:center;">
+            <p style="font-size:13px; color:var(--google-grey-700); margin-bottom:12px;">
+              Your calendar automatically synchronizes in real time across all devices.
+            </p>
+            <button class="btn btn-primary" id="triggerSyncNowBtn">🔄 Synchronize Now</button>
+          </div>
+        </div>
+
+        <!-- Tab 2: Database Settings & E2EE -->
+        <div id="syncTabConfig" class="hidden">
+          <div class="modal-form-row">
+            <label class="modal-label">Supabase Project URL</label>
+            <input type="text" class="modal-input" id="syncSupabaseUrlInput" placeholder="https://your-project-id.supabase.co">
+            <span style="font-size:11px; color:var(--google-grey-600);">Found in Supabase: Project Settings &rarr; API &rarr; Project URL</span>
+          </div>
+          <div class="modal-form-row">
+            <label class="modal-label">Supabase Public Anon Key</label>
+            <input type="password" class="modal-input" id="syncAnonKeyInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+            <span style="font-size:11px; color:var(--google-grey-600);">Found in Supabase: Project Settings &rarr; API &rarr; Project API keys (anon / public)</span>
+          </div>
+
+          <div class="e2ee-callout-box">
+            <div style="font-weight:700; display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+              🔒 Optional Client-Side Encryption (Zero-Knowledge AES-GCM-256)
+            </div>
+            <div>
+              Set a Passphrase to encrypt all calendar events, protocols, and notes in your browser <strong>before</strong> sending them to the cloud. Even Supabase cannot read your research.
+            </div>
+          </div>
+
+          <div class="modal-form-row">
+            <label class="modal-label">Encryption Passphrase (Optional)</label>
+            <input type="password" class="modal-input" id="syncPassphraseInput" placeholder="Leave empty for standard cloud storage">
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; margin-top:12px;">
+            <button class="btn btn-primary" id="saveSyncConfigBtn">Save Configuration</button>
+          </div>
+        </div>
+
+        <!-- Tab 3: Setup Guide -->
+        <div id="syncTabGuide" class="hidden">
+          <div style="font-size:13px; line-height:1.5; color:var(--google-grey-800);">
+            <p style="margin-bottom:8px;"><strong>How to get free 24/7 cloud sync in 60 seconds:</strong></p>
+            <ol style="padding-left:18px; margin-bottom:12px;">
+              <li style="margin-bottom:6px;">Go to <a href="https://supabase.com" target="_blank" style="color:var(--google-blue); font-weight:500;">supabase.com</a> and sign in (free tier).</li>
+              <li style="margin-bottom:6px;">Click <strong>New Project</strong> (e.g. name it <code>LabCal</code>).</li>
+              <li style="margin-bottom:6px;">Open the <strong>SQL Editor</strong> on the left, paste the snippet below, and click <strong>Run</strong>:</li>
+            </ol>
+            <div class="sql-code-container">
+              <button class="sql-copy-btn" id="copySqlBtn">Copy SQL</button>
+              <pre id="sqlSnippetBox" style="margin:0; font-family:inherit;"></pre>
+            </div>
+            <ol start="4" style="padding-left:18px; margin-top:12px;">
+              <li style="margin-bottom:6px;">Go to <strong>Project Settings &rarr; API</strong>, copy your <strong>URL</strong> and <strong>anon key</strong> into the Database Settings tab here.</li>
+              <li>Sign up or log in with your email in the Account tab. Done! All your devices will now sync 24/7.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" id="cloudSyncDoneBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="app-toast" id="appToast">Notification</div>
+
+  <!-- Main JavaScript Bootstrap -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

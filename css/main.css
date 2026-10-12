@@ -1,0 +1,309 @@
+/**
+ * Lab Calendar - Main Design System & Layout
+ * Google Calendar Aesthetic: Clean, Airy, Clutter-Free, Material 3
+ */
+
+:root {
+  /* Google Calendar Palette */
+  --google-blue: #1a73e8;
+  --google-blue-hover: #174ea6;
+  --google-blue-light: #e8f0fe;
+  --google-grey-50: #f8f9fa;
+  --google-grey-100: #f1f3f4;
+  --google-grey-200: #e8eaed;
+  --google-grey-300: #dadce0;
+  --google-grey-500: #9aa0a6;
+  --google-grey-700: #5f6368;
+  --google-grey-800: #3c4043;
+  --google-grey-900: #202124;
+  --google-red: #ea4335;
+  --google-green: #34a853;
+  --google-yellow: #fbbc04;
+
+  /* Accent Event Colors */
+  --color-ocean-bg: #e8f0fe;
+  --color-ocean-border: #1a73e8;
+  --color-ocean-text: #174ea6;
+
+  --color-emerald-bg: #e6f4ea;
+  --color-emerald-border: #137333;
+  --color-emerald-text: #0d5324;
+
+  --color-lavender-bg: #f3e8fd;
+  --color-lavender-border: #8430ce;
+  --color-lavender-text: #6b21a8;
+
+  --color-amber-bg: #fef7e0;
+  --color-amber-border: #b06000;
+  --color-amber-text: #8a4b00;
+
+  --color-rose-bg: #fce4ec;
+  --color-rose-border: #c2185b;
+  --color-rose-text: #ad1457;
+
+  --color-cyan-bg: #e0f7fa;
+  --color-cyan-border: #00838f;
+  --color-cyan-text: #006064;
+
+  /* Dimensions */
+  --header-height: 64px;
+  --sidebar-width: 290px;
+  --time-gutter-width: 60px;
+
+  /* Typography */
+  --font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 24px;
+  --shadow-sm: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+  --shadow-md: 0 1px 3px 0 rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
+  --shadow-lg: 0 8px 16px 0 rgba(60,64,67,0.2);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: #ffffff;
+  color: var(--google-grey-900);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* App Header */
+.app-header {
+  height: var(--header-height);
+  border-bottom: 1px solid var(--google-grey-200);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background-color: #ffffff;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--google-grey-800);
+  padding-right: 16px;
+  border-right: 1px solid var(--google-grey-200);
+}
+
+.app-logo-icon {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #1a73e8, #34a853);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+.app-logo-text {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.2px;
+  color: var(--google-grey-800);
+}
+
+.app-logo-text span {
+  color: var(--google-blue);
+  font-weight: 600;
+}
+
+/* Nav Controls */
+.nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.current-date-title {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--google-grey-800);
+  min-width: 200px;
+  margin-left: 8px;
+}
+
+/* Header Middle (Search) */
+.header-middle {
+  flex: 1;
+  max-width: 600px;
+  margin: 0 24px;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  background-color: var(--google-grey-100);
+  border-radius: var(--radius-md);
+  padding: 0 14px;
+  height: 42px;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.search-box:focus-within {
+  background-color: #ffffff;
+  border-color: var(--google-blue);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.search-box svg {
+  width: 18px;
+  height: 18px;
+  fill: var(--google-grey-700);
+  margin-right: 10px;
+}
+
+.search-box input {
+  border: none;
+  background: transparent;
+  width: 100%;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--google-grey-900);
+  outline: none;
+}
+
+/* Header Right */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.view-selector {
+  display: flex;
+  background-color: var(--google-grey-100);
+  border-radius: var(--radius-md);
+  padding: 3px;
+}
+
+.view-btn {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--google-grey-700);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.view-btn.active {
+  background-color: #ffffff;
+  color: var(--google-blue);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background-color: var(--google-blue);
+  color: #ffffff;
+}
+.btn-primary:hover {
+  background-color: var(--google-blue-hover);
+  box-shadow: 0 1px 3px rgba(26,115,232,0.3);
+}
+
+.btn-outline {
+  border-color: var(--google-grey-300);
+  background-color: #ffffff;
+  color: var(--google-grey-800);
+}
+.btn-outline:hover {
+  background-color: var(--google-grey-50);
+  border-color: var(--google-grey-500);
+}
+
+.export-dropdown-wrapper {
+  position: relative;
+}
+
+.export-dropdown-wrapper .create-menu-dropdown {
+  right: 0;
+  left: auto;
+  width: 250px;
+}
+
+.btn-secondary {
+  background-color: var(--google-grey-100);
+  color: var(--google-grey-800);
+}
+.btn-secondary:hover {
+  background-color: var(--google-grey-200);
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--google-grey-700);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.icon-btn:hover {
+  background-color: var(--google-grey-100);
+}
+
+/* App Main Container */
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* General Utilities */
+.hidden {
+  display: none !important;
+}
+
+.badge-icon {
+  width: 13px;
+  height: 13px;
+  display: inline-block;
+  vertical-align: middle;
+}

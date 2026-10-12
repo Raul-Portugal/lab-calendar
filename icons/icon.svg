@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a73e8"/>
+      <stop offset="100%" stop-color="#1557b0"/>
+    </linearGradient>
+    <linearGradient id="liquidGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34a853"/>
+      <stop offset="100%" stop-color="#0d652d"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- Calendar Outer Card -->
+  <rect x="48" y="56" width="416" height="400" rx="48" fill="#ffffff" filter="url(#shadow)" stroke="#dadce0" stroke-width="4"/>
+
+  <!-- Calendar Header Band -->
+  <path d="M 48 104 C 48 77.5 69.5 56 96 56 L 416 56 C 442.5 56 464 77.5 464 104 L 464 148 L 48 148 Z" fill="url(#bgGrad)"/>
+
+  <!-- Calendar Rings / Clips -->
+  <rect x="144" y="36" width="28" height="44" rx="10" fill="#f1f3f4" stroke="#1557b0" stroke-width="4"/>
+  <rect x="340" y="36" width="28" height="44" rx="10" fill="#f1f3f4" stroke="#1557b0" stroke-width="4"/>
+
+  <!-- Calendar Grid Hint Lines (Subtle) -->
+  <line x1="88" y1="200" x2="424" y2="200" stroke="#f1f3f4" stroke-width="4" stroke-linecap="round"/>
+  <line x1="88" y1="256" x2="424" y2="256" stroke="#f1f3f4" stroke-width="4" stroke-linecap="round"/>
+  <line x1="88" y1="312" x2="424" y2="312" stroke="#f1f3f4" stroke-width="4" stroke-linecap="round"/>
+  <line x1="88" y1="368" x2="424" y2="368" stroke="#f1f3f4" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Erlenmeyer Laboratory Flask Emblem in Center -->
+  <g transform="translate(256, 310)">
+    <!-- Flask Body Outline -->
+    <path d="M -24 -110 L 24 -110 M -18 -110 L -18 -40 L -76 70 C -88 92 -72 110 -46 110 L 46 110 C 72 110 88 92 76 70 L 18 -40 L 18 -110" 
+          fill="none" stroke="#1a73e8" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Liquid Content -->
+    <path d="M -54 30 L 54 30 L 68 64 C 76 82 64 98 42 98 L -42 98 C -64 98 -76 82 -68 64 Z" 
+          fill="url(#liquidGrad)"/>
+    
+    <!-- Bubbles -->
+    <circle cx="-16" cy="60" r="8" fill="#ffffff" opacity="0.6"/>
+    <circle cx="20" cy="74" r="6" fill="#ffffff" opacity="0.6"/>
+    <circle cx="4" cy="44" r="4" fill="#ffffff" opacity="0.7"/>
+
+    <!-- Graduation Marks -->
+    <line x1="-12" y1="-10" x2="6" y2="-10" stroke="#1a73e8" stroke-width="4" stroke-linecap="round"/>
+    <line x1="-14" y1="14" x2="8" y2="14" stroke="#1a73e8" stroke-width="4" stroke-linecap="round"/>
+    <line x1="-16" y1="38" x2="10" y2="38" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
