@@ -4,7 +4,13 @@
  * Zero external libraries required (pure Web Crypto API & native fetch).
  */
 
-const CONFIG_STORAGE_KEY = 'lab_calendar_cloud_config';
+const DEFAULT_CONFIG_STORAGE_KEY = 'lab_calendar_cloud_config';
+
+// Isolated config key when the test suite overrides the storage key
+function getConfigStorageKey() {
+  const override = typeof window !== 'undefined' && window.__LABCAL_STORAGE_KEY__;
+  return override ? `${override}_cloud_config` : DEFAULT_CONFIG_STORAGE_KEY;
+}
 
 export const SUPABASE_SETUP_SQL = `-- Run this in your Supabase SQL Editor (takes 10 seconds):
 CREATE TABLE IF NOT EXISTS user_calendar_data (
@@ -139,7 +145,7 @@ export class SyncManager {
 
   loadConfig() {
     try {
-      const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+      const raw = localStorage.getItem(getConfigStorageKey());
       if (raw) return JSON.parse(raw);
     } catch (e) {}
     return {
@@ -157,7 +163,7 @@ export class SyncManager {
 
   saveConfig() {
     try {
-      localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(this.config));
+      localStorage.setItem(getConfigStorageKey(), JSON.stringify(this.config));
     } catch (e) {}
   }
 

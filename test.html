@@ -23,7 +23,14 @@
   </div>
 
   <script type="module">
-    import {
+    // Isolate the test suite from the real calendar: this key must be set BEFORE
+    // state.js / sync.js are loaded, so the modules are imported dynamically below.
+    const TEST_STORAGE_KEY = 'lab_calendar_test_suite_data';
+    window.__LABCAL_STORAGE_KEY__ = TEST_STORAGE_KEY;
+    localStorage.removeItem(TEST_STORAGE_KEY);
+    localStorage.removeItem(`${TEST_STORAGE_KEY}_cloud_config`);
+
+    const {
       formatDateKey,
       parseDateKey,
       shiftDateKey,
@@ -36,17 +43,17 @@
       getCategoryDefaultColor,
       calculateDaysBetween,
       escapeHtml
-    } from './js/utils.js';
-    import {
+    } = await import('./js/utils.js');
+    const {
       BUILT_IN_PROTOCOLS,
       instantiateProtocol,
       shiftProtocolGroup,
       cascadeShiftProtocolSteps,
       checkProtocolChainIntegrity
-    } from './js/protocols.js';
-    import { calculateQuotaStats, calculateWeeklyQuotaStats, DEFAULT_QUOTAS, getSuggestedQuotaDuration } from './js/quotas.js';
-    import { store } from './js/state.js';
-    import { encryptPayload, decryptPayload, SyncManager } from './js/sync.js';
+    } = await import('./js/protocols.js');
+    const { calculateQuotaStats, calculateWeeklyQuotaStats, DEFAULT_QUOTAS, getSuggestedQuotaDuration } = await import('./js/quotas.js');
+    const { store } = await import('./js/state.js');
+    const { encryptPayload, decryptPayload, SyncManager } = await import('./js/sync.js');
 
     const resultsEl = document.getElementById('results');
     const summaryEl = document.getElementById('summary');
@@ -291,7 +298,8 @@
       // 17. calculateDaysBetween & escapeHtml Helpers
       assert(calculateDaysBetween('2026-10-12', '2026-10-15') === 3, 'calculateDaysBetween("2026-10-12", "2026-10-15") === 3');
       assert(calculateDaysBetween('2026-10-12', '2026-10-12') === 0, 'calculateDaysBetween same day === 0');
-      assert(escapeHtml('<script>alert("x")&</script>') === '&lt;script&gt;alert(&quot;x&quot;)&amp;&lt;/script&gt;', 'escapeHtml sanitizes HTML entities safely');
+      // Note: '<\/script>' must stay escaped, a literal closing tag would end this inline script
+      assert(escapeHtml('<script>alert("x")&<\/script>') === '&lt;script&gt;alert(&quot;x&quot;)&amp;&lt;/script&gt;', 'escapeHtml sanitizes HTML entities safely');
 
       // 18. Zero-Knowledge AES-GCM-256 E2EE Encryption & Decryption
       const testSecretPayload = {
@@ -334,15 +342,24 @@
       testSyncManager.setStatus('syncing', 'Sync in progress');
       assert(capturedStatus === 'syncing', 'SyncManager dispatches status change events to listeners');
 
+      // 20. Regression: test suite isolation & non-mutating expansion
+      assert(localStorage.getItem(TEST_STORAGE_KEY) !== null, 'Store persists to the isolated test storage key');
+      store.events = JSON.parse(JSON.stringify(instantiated.events));
+      const wbDay1Expanded = store.getExpandedEventsForRange(['2026-10-15']);
+      assert(wbDay1Expanded.some(e => e.derivedStepLabel === 'Step 1 of 10'), 'Expanded protocol steps carry derived step labels');
+      assert(store.events.every(e => e.derivedStepLabel === undefined && e.hasBrokenChainWarning === undefined), 'getExpandedEventsForRange does not mutate stored events');
+
       summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
       summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
       window.__TESTS_PASSED__ = (failed === 0);
-      localStorage.removeItem('lab_calendar_data_v2');
     } catch (e) {
       summaryEl.textContent = `Error in test suite: ${e.message}`;
       summaryEl.style.color = '#c5221f';
       console.error(e);
       window.__TESTS_PASSED__ = false;
+    } finally {
+      localStorage.removeItem(TEST_STORAGE_KEY);
+      localStorage.removeItem(`${TEST_STORAGE_KEY}_cloud_config`);
     }
   </script>
 </body>

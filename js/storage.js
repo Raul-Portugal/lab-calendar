@@ -7,8 +7,20 @@ import { generateId, formatDateKey, getWeekDates, foldIcsLine, shiftDateKey } fr
 import { BUILT_IN_PROTOCOLS } from './protocols.js';
 import { DEFAULT_QUOTAS } from './quotas.js';
 
-const STORAGE_KEY = 'lab_calendar_data_v2';
+const DEFAULT_STORAGE_KEY = 'lab_calendar_data_v2';
 const CURRENT_SCHEMA_VERSION = 2;
+
+/**
+ * Resolve the localStorage key. The test suite sets window.__LABCAL_STORAGE_KEY__
+ * before importing the store so it never touches the real calendar data.
+ */
+export function getStorageKey() {
+  return (typeof window !== 'undefined' && window.__LABCAL_STORAGE_KEY__) || DEFAULT_STORAGE_KEY;
+}
+
+function isUsingDefaultStorageKey() {
+  return getStorageKey() === DEFAULT_STORAGE_KEY;
+}
 
 /**
  * Initial Seed Data for fresh install
@@ -134,7 +146,8 @@ export function migrateState(loadedData) {
  */
 export function loadStateFromStorage() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lab_calendar_data_v1');
+    const raw = localStorage.getItem(getStorageKey()) ||
+      (isUsingDefaultStorageKey() ? localStorage.getItem('lab_calendar_data_v1') : null);
     if (!raw) {
       const initial = getInitialSeedData();
       saveStateToStorage(initial);
@@ -157,7 +170,7 @@ export function saveStateToStorage(data) {
       ...data,
       schemaVersion: CURRENT_SCHEMA_VERSION
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    localStorage.setItem(getStorageKey(), JSON.stringify(payload));
   } catch (err) {
     console.error('Failed to save to localStorage:', err);
   }

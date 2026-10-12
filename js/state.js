@@ -4,7 +4,7 @@
  */
 
 import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey } from './utils.js';
-import { loadStateFromStorage, saveStateToStorage } from './storage.js';
+import { loadStateFromStorage, saveStateToStorage, getStorageKey } from './storage.js';
 import { BUILT_IN_PROTOCOLS, shiftProtocolGroup as shiftProtoEvents, cascadeShiftProtocolSteps, checkProtocolChainIntegrity } from './protocols.js';
 
 const DAY_CODE_MAP = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
@@ -53,14 +53,8 @@ class StateStore {
 
     // Multi-tab sync listener
     window.addEventListener('storage', (e) => {
-      if (e.key === 'lab_calendar_data_v2') {
-        const reloaded = loadStateFromStorage();
-        this.events = reloaded.events;
-        this.series = reloaded.series;
-        this.exceptions = reloaded.exceptions;
-        this.quotas = reloaded.quotas;
-        this.customProtocols = reloaded.customProtocols;
-        this.deletedProtocolIds = new Set(reloaded.deletedProtocolIds || []);
+      if (e.key === getStorageKey()) {
+        this.applyData(loadStateFromStorage());
         this.notify('storage_sync');
       }
     });
@@ -71,6 +65,28 @@ class StateStore {
     this.maxHistory = 100;
 
     this.listeners = new Set();
+  }
+
+  /**
+   * Replace persisted data fields from a loaded / imported / synced snapshot.
+   * Fields missing from the snapshot keep their current value.
+   */
+  applyData(data) {
+    if (!data) return;
+    if (Array.isArray(data.events)) this.events = data.events;
+    if (Array.isArray(data.series)) this.series = data.series;
+    if (Array.isArray(data.exceptions)) this.exceptions = data.exceptions;
+    if (Array.isArray(data.quotas)) this.quotas = data.quotas;
+    if (Array.isArray(data.customProtocols)) this.customProtocols = data.customProtocols;
+    if (Array.isArray(data.deletedProtocolIds)) this.deletedProtocolIds = new Set(data.deletedProtocolIds);
+    if (Array.isArray(data.quickClasses)) this.quickClasses = data.quickClasses;
+    if (Array.isArray(data.categories)) this.categories = data.categories;
+    if (data.settings && typeof data.settings === 'object') {
+      this.settings = { ...this.settings, use24Hour: Boolean(data.settings.use24Hour) };
+      if (Array.isArray(data.settings.visibleCategories)) {
+        this.visibleCategories = new Set(data.settings.visibleCategories);
+      }
+    }
   }
 
   // Subscribe to state mutations
@@ -325,7 +341,8 @@ class StateStore {
       }
     });
 
-    // Assign labels and broken chain flags
+    // Compute labels and broken chain flags without mutating stored events
+    const derivedById = new Map();
     protocolGroups.forEach((allGroupEvents, groupId) => {
       const brokenSteps = checkProtocolChainIntegrity(allGroupEvents, groupId);
       const totalCount = allGroupEvents.length;
@@ -335,12 +352,17 @@ class StateStore {
         if (stepEvt.isSplitHalf) {
           label = `Step ${stepEvt.splitLabel || `${idx + 1}`}`;
         }
-        stepEvt.derivedStepLabel = label;
-        stepEvt.hasBrokenChainWarning = brokenSteps.has(stepEvt.id);
+        derivedById.set(stepEvt.id, {
+          derivedStepLabel: label,
+          hasBrokenChainWarning: brokenSteps.has(stepEvt.id)
+        });
       });
     });
 
-    return resultEvents;
+    return resultEvents.map((evt) => {
+      const derived = derivedById.get(evt.id);
+      return derived ? { ...evt, ...derived } : evt;
+    });
   }
 
   // Event Mutations

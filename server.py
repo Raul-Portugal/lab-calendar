@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Lab Calendar Local Server
-Serves the web application on http://127.0.0.1:8000 with CORS and correct MIME types.
+Serves the web application on http://127.0.0.1:8000 with correct MIME types and caching disabled.
 Guarantees .js and .mjs files are delivered as 'text/javascript' even if Windows registry is misconfigured.
+Uses a threaded server so parallel / speculative browser connections cannot stall page loads.
 """
 
 import http.server
-import socketserver
 import webbrowser
 import sys
 import os
@@ -20,7 +20,7 @@ class LabCalHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
 
     def end_headers(self):
-        # Allow cross-origin requests and disable aggressive caching for local dev
+        # Disable aggressive caching for local dev
         self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
@@ -39,6 +39,13 @@ LabCalHTTPRequestHandler.extensions_map.update({
     '.ics': 'text/calendar',
 })
 
+class LabCalHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    # On Windows SO_REUSEADDR lets two servers bind the same port; keep it off so
+    # the "port occupied, try next" fallback below actually works.
+    allow_reuse_address = False
+
+
 def run_server():
     port = PORT
     max_tries = 10
@@ -46,7 +53,7 @@ def run_server():
 
     for attempt in range(max_tries):
         try:
-            httpd = socketserver.TCPServer((HOST, port), LabCalHTTPRequestHandler)
+            httpd = LabCalHTTPServer((HOST, port), LabCalHTTPRequestHandler)
             break
         except OSError:
             print(f"Port {port} is occupied, trying port {port + 1}...")
