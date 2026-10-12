@@ -4,7 +4,7 @@
  * active/passive step type selector, timeline preview, and single protocol export
  */
 
-import { generateId, formatDuration } from './utils.js';
+import { generateId, formatDuration, escapeHtml, safeColor } from './utils.js';
 import { exportSingleProtocol } from './storage.js';
 
 export class ProtocolBuilder {
@@ -160,7 +160,7 @@ export class ProtocolBuilder {
         <div class="step-form-grid">
           <div class="form-group full-width">
             <label>Step Title</label>
-            <input type="text" class="input-sm step-title-input" value="${step.title || ''}" placeholder="e.g. Primary Antibody Incubation" />
+            <input type="text" class="input-sm step-title-input" value="${escapeHtml(step.title || '')}" placeholder="e.g. Primary Antibody Incubation" />
           </div>
 
           <div class="form-group">
@@ -182,7 +182,7 @@ export class ProtocolBuilder {
 
           <div class="form-group ${isAnchored ? '' : 'hidden'} step-anchor-time-wrapper">
             <label>Start Time on Day</label>
-            <input type="time" class="input-sm step-anchor-time-input" value="${step.anchorTime || '09:00'}" />
+            <input type="time" class="input-sm step-anchor-time-input" value="${escapeHtml(step.anchorTime || '09:00')}" />
           </div>
 
           <div class="form-group ${isAnchored ? 'hidden' : ''} step-gap-wrapper">
@@ -220,7 +220,7 @@ export class ProtocolBuilder {
 
           <div class="form-group full-width">
             <label>Reagents & Bench Notes</label>
-            <input type="text" class="input-sm step-notes-input" value="${step.notes || ''}" placeholder="e.g. Centrifuge 4°C, 12,000 rpm; add DTT fresh" />
+            <input type="text" class="input-sm step-notes-input" value="${escapeHtml(step.notes || '')}" placeholder="e.g. Centrifuge 4°C, 12,000 rpm; add DTT fresh" />
           </div>
         </div>
       `;
@@ -276,7 +276,7 @@ export class ProtocolBuilder {
 
   renderTimelinePreview() {
     this.previewContainer.innerHTML = '';
-    const themeColor = this.colorSelect.value || 'ocean';
+    const themeColor = safeColor(this.colorSelect.value);
 
     // Group steps by computed day
     let curDay = 0;
@@ -312,7 +312,7 @@ export class ProtocolBuilder {
         stepPill.innerHTML = `
           <div class="pill-badge">#${s.index}</div>
           <div class="pill-content">
-            <span class="pill-name">${s.title || 'Untitled Step'}</span>
+            <span class="pill-name">${escapeHtml(s.title || 'Untitled Step')}</span>
             <span class="pill-meta">${formatDuration(s.durationMinutes)} • ${isPassive ? 'Passive (Hatched)' : 'Active'}</span>
           </div>
         `;

@@ -349,6 +349,23 @@
       assert(wbDay1Expanded.some(e => e.derivedStepLabel === 'Step 1 of 10'), 'Expanded protocol steps carry derived step labels');
       assert(store.events.every(e => e.derivedStepLabel === undefined && e.hasBrokenChainWarning === undefined), 'getExpandedEventsForRange does not mutate stored events');
 
+      // 21. Untrusted protocol import sanitization
+      const { sanitizeProtocol } = await import('./js/protocols.js');
+      const { safeColor } = await import('./js/utils.js');
+      const evilProto = sanitizeProtocol({
+        name: '<img src=x onerror=alert(1)>',
+        color: 'ocean" onmouseover="alert(1)',
+        steps: [{ title: 'Lysis', durationMinutes: '40', anchorType: 'bogus', stepType: '<b>', notes: 5, anchorTime: '"><svg>' }],
+        extraField: 'dropped'
+      });
+      assert(evilProto && evilProto.color === 'ocean', 'sanitizeProtocol restricts color to palette keys');
+      assert(evilProto.steps[0].durationMinutes === 40 && evilProto.steps[0].stepType === 'active' && evilProto.steps[0].anchorType === 'after-previous', 'sanitizeProtocol coerces numbers and enums');
+      assert(evilProto.steps[0].anchorTime === '09:00' && evilProto.steps[0].notes === '', 'sanitizeProtocol rejects malformed anchorTime / non-string notes');
+      assert(!('extraField' in evilProto), 'sanitizeProtocol drops unknown fields');
+      assert(sanitizeProtocol({ name: 'x', steps: 'nope' }) === null && sanitizeProtocol(null) === null, 'sanitizeProtocol rejects invalid files');
+      assert(safeColor('lavender') === 'lavender' && safeColor('__proto__') === 'ocean', 'safeColor only allows palette names');
+      assert(escapeHtml(0) === '0', 'escapeHtml keeps numeric zero');
+
       summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
       summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
       window.__TESTS_PASSED__ = (failed === 0);

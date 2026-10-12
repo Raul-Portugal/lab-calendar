@@ -14,7 +14,8 @@ import {
   generateId,
   shiftDateKey,
   formatTimeDisplay,
-  getCategoryDefaultColor
+  getCategoryDefaultColor,
+  escapeHtml
 } from './utils.js';
 import { instantiateProtocol } from './protocols.js';
 import { createEventFromQuota, calculateWeeklyQuotaStats, getSuggestedQuotaDuration } from './quotas.js';
@@ -801,7 +802,7 @@ export class DragDropController {
     const timeLabel = `${minutesToTime(startMinute)} – ${minutesToTime(startMinute + durationMinutes)}`;
     this.ghostPreviewEl.innerHTML = `
       <div class="ghost-time">${timeLabel}</div>
-      ${customLabel ? `<div class="ghost-extra">${customLabel}</div>` : ''}
+      ${customLabel ? `<div class="ghost-extra">${escapeHtml(customLabel)}</div>` : ''}
     `;
   }
 

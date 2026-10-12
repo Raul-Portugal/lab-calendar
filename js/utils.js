@@ -261,6 +261,11 @@ export function getPaletteColor(name) {
   return PALETTE[name] || PALETTE.ocean;
 }
 
+// Restrict a color name to known palette keys (it is interpolated into class names and CSS vars)
+export function safeColor(name, fallback = 'ocean') {
+  return Object.prototype.hasOwnProperty.call(PALETTE, name) ? name : fallback;
+}
+
 /**
  * RFC 5545 Line Folding Helper (Folds at 75 octets with CRLF + space)
  */
@@ -292,7 +297,7 @@ export function calculateDaysBetween(startDateKey, endDateKey) {
 
 // Escape HTML special characters for safe innerHTML injection
 export function escapeHtml(str) {
-  if (!str) return '';
+  if (str === null || str === undefined || str === '') return '';
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

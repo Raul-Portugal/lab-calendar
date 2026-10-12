@@ -3,7 +3,64 @@
  * Guarantees unified protocol color inheritance and explicit anchor modeling
  */
 
-import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey } from './utils.js';
+import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey, safeColor } from './utils.js';
+
+const STEP_TYPES = ['active', 'passive', 'run'];
+const ANCHOR_TYPES = ['after-previous', 'day-anchored'];
+
+function cleanText(value, maxLength) {
+  return typeof value === 'string' ? value.slice(0, maxLength) : '';
+}
+
+function cleanInt(value, min, max, fallback) {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+/**
+ * Validate an untrusted protocol template (e.g. an imported .protocol.json shared by
+ * another lab member). Only known fields survive; text is kept as plain strings and
+ * numbers / enums are coerced to safe ranges. Returns null if it is not a usable protocol.
+ */
+export function sanitizeProtocol(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.steps)) return null;
+  const name = cleanText(raw.name, 200).trim();
+  if (!name) return null;
+
+  const steps = raw.steps
+    .filter((s) => s && typeof s === 'object')
+    .slice(0, 100)
+    .map((s) => {
+      const anchorType = ANCHOR_TYPES.includes(s.anchorType) ? s.anchorType : 'after-previous';
+      const anchorTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(s.anchorTime) ? s.anchorTime : '09:00';
+      return {
+        id: generateId('step'),
+        title: cleanText(s.title, 200) || 'Untitled Step',
+        durationMinutes: cleanInt(s.durationMinutes, 5, 1440, 30),
+        anchorType,
+        gapMinutes: cleanInt(s.gapMinutes, 0, 1440, 0),
+        dayOffset: cleanInt(s.dayOffset, 0, 30, 0),
+        anchorTime,
+        stepType: STEP_TYPES.includes(s.stepType) ? s.stepType : 'active',
+        notes: cleanText(s.notes, 2000)
+      };
+    });
+  if (steps.length === 0) return null;
+
+  const maxDayOffset = steps.reduce(
+    (max, s) => (s.anchorType === 'day-anchored' ? Math.max(max, s.dayOffset) : max), 0
+  );
+
+  return {
+    name,
+    category: 'Protocol',
+    color: safeColor(raw.color),
+    totalDays: maxDayOffset + 1,
+    version: cleanInt(raw.version, 1, 1000, 1),
+    description: cleanText(raw.description, 2000),
+    steps
+  };
+}
 
 export const BUILT_IN_PROTOCOLS = [
   {

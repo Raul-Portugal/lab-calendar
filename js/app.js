@@ -11,6 +11,7 @@ import { ProtocolBuilder } from './protocol-builder.js';
 import { calculateQuotaStats } from './quotas.js';
 import { exportToIcs, exportStateToJson, exportSingleProtocol } from './storage.js';
 import { SyncManager, SUPABASE_SETUP_SQL } from './sync.js';
+import { sanitizeProtocol } from './protocols.js';
 import {
   formatDateKey,
   getWeekDates,
@@ -21,7 +22,9 @@ import {
   minutesToTime,
   generateId,
   parseDateKey,
-  getCategoryDefaultColor
+  getCategoryDefaultColor,
+  escapeHtml,
+  safeColor
 } from './utils.js';
 
 class LabCalendarApp {
@@ -278,8 +281,8 @@ class LabCalendarApp {
       const reader = new FileReader();
       reader.onload = (event) => {
         try {
-          const parsed = JSON.parse(event.target.result);
-          if (parsed.name && parsed.steps) {
+          const parsed = sanitizeProtocol(JSON.parse(event.target.result));
+          if (parsed) {
             parsed.id = generateId('proto_shared');
             store.addCustomProtocol(parsed);
             this.showToast(`Imported protocol "${parsed.name}"!`);
@@ -378,7 +381,7 @@ class LabCalendarApp {
 
       const categoriesHtml = (quota.categories && quota.categories.length > 0)
         ? `<div class="quota-categories-tags">
-            ${quota.categories.map((c) => `<span class="quota-category-tag">${c}</span>`).join('')}
+            ${quota.categories.map((c) => `<span class="quota-category-tag">${escapeHtml(c)}</span>`).join('')}
            </div>`
         : '';
 
@@ -436,8 +439,8 @@ class LabCalendarApp {
       card.innerHTML = `
         <div class="quota-card-top">
           <div class="quota-card-title">
-            <span class="chip-color-dot" style="background:var(--color-${quota.color || 'lavender'}-border);"></span>
-            <span>${quota.title}</span>
+            <span class="chip-color-dot" style="background:var(--color-${safeColor(quota.color, 'lavender')}-border);"></span>
+            <span>${escapeHtml(quota.title)}</span>
           </div>
           <div style="display:flex; align-items:center; gap:4px;">
             <div class="quota-actions">
@@ -487,8 +490,8 @@ class LabCalendarApp {
       chip.title = `Drag onto calendar to schedule ${cls.title} (${cls.duration}m)`;
 
       chip.innerHTML = `
-        <span class="chip-color-dot" style="background:var(--color-${cls.color || 'ocean'}-border, #1967d2);"></span>
-        <span>${cls.title} (${cls.duration}m)</span>
+        <span class="chip-color-dot" style="background:var(--color-${safeColor(cls.color)}-border, #1967d2);"></span>
+        <span>${escapeHtml(cls.title)} (${escapeHtml(cls.duration)}m)</span>
         <span class="chip-actions">
           <button class="chip-btn edit-chip-btn" title="Edit class">✎</button>
           <button class="chip-btn delete-chip-btn" title="Delete class">✕</button>
@@ -531,16 +534,16 @@ class LabCalendarApp {
 
       card.innerHTML = `
         <div class="protocol-card-header">
-          <div class="protocol-card-name">${proto.name}</div>
+          <div class="protocol-card-name">${escapeHtml(proto.name)}</div>
           <div class="protocol-card-actions">
-            <span class="protocol-days-badge">${daysLabel}</span>
+            <span class="protocol-days-badge">${escapeHtml(daysLabel)}</span>
             <button class="protocol-action-btn edit-proto-btn" title="Edit Protocol">✎</button>
             <button class="protocol-action-btn share-btn" title="Export / Share .protocol.json">⤓</button>
             <button class="protocol-action-btn delete-proto-btn" title="Delete Protocol" style="color:var(--google-red);">🗑</button>
           </div>
         </div>
         <div class="protocol-card-meta">
-          <span>${proto.steps.length} steps • ${proto.category || 'Protocol'}</span>
+          <span>${proto.steps.length} steps • ${escapeHtml(proto.category || 'Protocol')}</span>
           ${isCustom ? `<span style="color:var(--google-blue); font-weight:600;"> (Custom)</span>` : ''}
         </div>
       `;
@@ -587,8 +590,8 @@ class LabCalendarApp {
       label.innerHTML = `
         <div class="filter-left">
           <input type="checkbox" class="filter-checkbox" ${isVisible ? 'checked' : ''}>
-          <span class="chip-color-dot" style="background:var(--color-${cat.color || 'ocean'}-border, #1967d2);"></span>
-          <span>${cat.name}</span>
+          <span class="chip-color-dot" style="background:var(--color-${safeColor(cat.color)}-border, #1967d2);"></span>
+          <span>${escapeHtml(cat.name)}</span>
         </div>
         <div class="filter-actions">
           <button class="filter-action-btn edit-cat-btn" title="Edit Category">✎</button>
@@ -836,7 +839,7 @@ class LabCalendarApp {
       if (event.isChained && event.protocolName) {
         this.protocolInfoBanner.innerHTML = `
           <div style="background:var(--google-blue-light); padding:8px 12px; border-radius:6px; font-size:12px; color:var(--google-blue); font-weight:500;">
-            🔗 Part of chained protocol: <strong>${event.protocolName}</strong> (${event.derivedStepLabel || 'Step'})
+            🔗 Part of chained protocol: <strong>${escapeHtml(event.protocolName)}</strong> (${escapeHtml(event.derivedStepLabel || 'Step')})
             <br><span style="font-size:11px; opacity:0.85;">Hold Shift while dragging to move all steps; Ctrl to cascade downstream.</span>
           </div>
         `;
@@ -1103,8 +1106,8 @@ class LabCalendarApp {
       label.style.cursor = 'pointer';
 
       label.innerHTML = `
-        <input type="checkbox" value="${cat.name}" ${linked.has(cat.name) ? 'checked' : ''} style="accent-color:var(--google-blue);">
-        <span>${cat.name}</span>
+        <input type="checkbox" value="${escapeHtml(cat.name)}" ${linked.has(cat.name) ? 'checked' : ''} style="accent-color:var(--google-blue);">
+        <span>${escapeHtml(cat.name)}</span>
       `;
       this.quotaCategoriesCheckboxes.appendChild(label);
     });

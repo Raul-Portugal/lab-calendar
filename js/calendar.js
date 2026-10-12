@@ -17,7 +17,8 @@ import {
   getPaletteColor,
   minutesToTime,
   calculateDaysBetween,
-  escapeHtml
+  escapeHtml,
+  safeColor
 } from './utils.js';
 
 export class CalendarRenderer {
@@ -241,7 +242,7 @@ export class CalendarRenderer {
       const isPassive = evt.stepType === 'passive';
       const overlapsPassive = l.overlapsPassive === true;
       const card = document.createElement('div');
-      card.className = `cal-event-card color-${evt.color || 'ocean'} ${evt.isChained ? 'is-chained-step' : ''} ${isPassive ? 'is-passive-step' : ''} ${overlapsPassive ? 'has-passive-underlay' : ''}`;
+      card.className = `cal-event-card color-${safeColor(evt.color)} ${evt.isChained ? 'is-chained-step' : ''} ${isPassive ? 'is-passive-step' : ''} ${overlapsPassive ? 'has-passive-underlay' : ''}`;
       card.id = `evt_${evt.id}`;
       card.dataset.eventId = evt.id;
       if (evt.isSeriesOccurrence) {
@@ -282,9 +283,9 @@ export class CalendarRenderer {
       let stepBadgeHtml = '';
       if (evt.isChained && evt.derivedStepLabel) {
         stepBadgeHtml = `
-          <div class="step-counter-badge" title="${evt.derivedStepLabel} in ${evt.protocolName || 'Protocol'}">
+          <div class="step-counter-badge" title="${escapeHtml(evt.derivedStepLabel)} in ${escapeHtml(evt.protocolName || 'Protocol')}">
             <svg class="badge-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 19v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1l4-5V8a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1v6l4 5m-8-9v-2h-2v2h2m0 4.5l-2.5 3.12h7L13 14.5V12h-2v2.5Z"/></svg>
-            <span>${evt.derivedStepLabel}</span>
+            <span>${escapeHtml(evt.derivedStepLabel)}</span>
           </div>
         `;
       } else if (evt.quotaId) {
@@ -324,16 +325,16 @@ export class CalendarRenderer {
         ${passiveRibbonHtml}
         <div class="event-card-inner" style="${isPassive ? 'padding-left: 28px;' : ''}">
           <div class="event-card-header">
-            <div class="event-title" title="${evt.title}">${evt.title}</div>
+            <div class="event-title" title="${escapeHtml(evt.title)}">${escapeHtml(evt.title)}</div>
             ${stepBadgeHtml}
           </div>
           ${warningHtml}
           <div class="event-time-row">
-            <span class="event-time">${timeDisplay}</span>
+            <span class="event-time">${escapeHtml(timeDisplay)}</span>
             <span class="event-duration">(${durationDisplay})</span>
             ${isPassive ? `<span class="passive-pill">Passive</span>` : ''}
           </div>
-          ${evt.notes && heightPx > 45 ? `<div class="event-notes-preview">${evt.notes}</div>` : ''}
+          ${evt.notes && heightPx > 45 ? `<div class="event-notes-preview">${escapeHtml(evt.notes)}</div>` : ''}
           ${evt.isChained ? `<div class="protocol-shift-tip">Shift: whole group • Ctrl: cascade</div>` : ''}
         </div>
         <div class="resize-handle resize-handle-bottom" title="Drag to adjust end time"></div>
@@ -594,7 +595,7 @@ export class CalendarRenderer {
 
         const span = (endCol - startCol) + 1;
         const bar = document.createElement('div');
-        bar.className = `month-multiday-bar color-${evt.color || 'ocean'} ${isContinuationLeft ? 'is-continuation-left' : ''} ${isContinuationRight ? 'is-continuation-right' : ''}`;
+        bar.className = `month-multiday-bar color-${safeColor(evt.color)} ${isContinuationLeft ? 'is-continuation-left' : ''} ${isContinuationRight ? 'is-continuation-right' : ''}`;
         bar.style.gridColumn = `${startCol + 1} / span ${span}`;
         bar.dataset.eventId = evt.id;
 
@@ -618,11 +619,11 @@ export class CalendarRenderer {
         if (colIdx === -1) return;
 
         const pill = document.createElement('div');
-        pill.className = `month-event-pill color-${evt.color || 'ocean'}`;
+        pill.className = `month-event-pill color-${safeColor(evt.color)}`;
         pill.style.gridColumn = `${colIdx + 1} / span 1`;
         pill.dataset.eventId = evt.id;
         pill.title = `${evt.startTime || ''} ${evt.title}`;
-        pill.innerHTML = `<span class="pill-dot"></span><span class="pill-text">${evt.startTime ? evt.startTime + ' ' : ''}${escapeHtml(evt.title)}</span>`;
+        pill.innerHTML = `<span class="pill-dot"></span><span class="pill-text">${evt.startTime ? escapeHtml(evt.startTime) + ' ' : ''}${escapeHtml(evt.title)}</span>`;
 
         pill.addEventListener('mousedown', (e) => e.stopPropagation());
         pill.addEventListener('click', (e) => {
@@ -685,14 +686,14 @@ export class CalendarRenderer {
 
       const span = (endCol - startCol) + 1;
       const bar = document.createElement('div');
-      bar.className = `cal-allday-bar color-${evt.color || 'ocean'}`;
+      bar.className = `cal-allday-bar color-${safeColor(evt.color)}`;
       bar.id = `allday_${evt.id}`;
       bar.dataset.eventId = evt.id;
       bar.style.gridColumn = `${startCol + 1} / span ${span}`;
 
       const multiLabel = span > 1 ? ` (${span}d)` : '';
       bar.innerHTML = `
-        <span class="allday-title">${evt.title}${multiLabel}</span>
+        <span class="allday-title">${escapeHtml(evt.title)}${multiLabel}</span>
       `;
       bar.title = `${evt.title} (${startKey}${endKey !== startKey ? ' to ' + endKey : ''})`;
 
