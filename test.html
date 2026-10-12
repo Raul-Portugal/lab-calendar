@@ -366,6 +366,115 @@
       assert(safeColor('lavender') === 'lavender' && safeColor('__proto__') === 'ocean', 'safeColor only allows palette names');
       assert(escapeHtml(0) === '0', 'escapeHtml keeps numeric zero');
 
+      // 22. Cloud sync: never silently discard data (mocked Supabase PostgREST)
+      const { isLocalDataChange } = await import('./js/state.js');
+      assert(!isLocalDataChange('hover_change') && !isLocalDataChange('date_change') && !isLocalDataChange('filter_change') && !isLocalDataChange('cloud_pull'), 'View-only and cloud notifications are not local data edits');
+      assert(isLocalDataChange('event_added') && isLocalDataChange('backup_import') && isLocalDataChange('undo'), 'Edits, backup imports and undo are local data edits');
+
+      const realFetch = window.fetch;
+      const fake = { row: null, calls: [], unauthorizedOnce: false, alwaysUnauthorized: false, beforePatch: null, clock: Date.parse('2026-10-01T00:00:00Z') };
+      const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+      window.fetch = async (url, opts = {}) => {
+        const u = new URL(url);
+        const method = opts.method || 'GET';
+        fake.calls.push(`${method} ${u.pathname}`);
+        if (u.pathname === '/auth/v1/token') {
+          if (fake.alwaysUnauthorized) return jsonRes(400, { msg: 'invalid refresh token' });
+          return jsonRes(200, { access_token: 'tok2', refresh_token: 'ref2' });
+        }
+        if (fake.alwaysUnauthorized || (fake.unauthorizedOnce && opts.headers?.Authorization === 'Bearer tok1')) {
+          fake.unauthorizedOnce = false;
+          return jsonRes(401, { message: 'JWT expired' });
+        }
+        const serverStamp = () => new Date(fake.clock += 1000).toISOString().replace('Z', '+00:00');
+        if (method === 'GET') return jsonRes(200, fake.row ? [{ updated_at: fake.row.updated_at, payload: fake.row.payload }] : []);
+        const body = JSON.parse(opts.body);
+        if (method === 'POST') {
+          if (fake.row) return jsonRes(409, { message: 'duplicate key' });
+          fake.row = { ...body, updated_at: serverStamp() };
+          return jsonRes(201, [fake.row]);
+        }
+        if (method === 'PATCH') {
+          if (fake.beforePatch) { const hook = fake.beforePatch; fake.beforePatch = null; hook(); }
+          const expected = decodeURIComponent(u.searchParams.get('updated_at').replace(/^eq\./, ''));
+          if (!fake.row || Date.parse(fake.row.updated_at) !== Date.parse(expected)) return jsonRes(200, []);
+          fake.row = { ...body, updated_at: serverStamp() };
+          return jsonRes(200, [fake.row]);
+        }
+        return jsonRes(400, {});
+      };
+      const otherDeviceWrites = (events) => {
+        fake.row = { ...fake.row, updated_at: new Date(fake.clock += 1000).toISOString(), payload: { isEncrypted: false, payload: { events } } };
+      };
+
+      try {
+        const sm = new SyncManager(store);
+        Object.assign(sm.config, { supabaseUrl: 'https://fake.supabase.co', supabaseAnonKey: 'anon', accessToken: 'tok1', refreshToken: 'ref1', userId: 'user-1', userEmail: 't@example.com', passphrase: '' });
+        let resolverCalls = 0;
+        let resolverAnswer = null;
+        sm.conflictResolver = async () => { resolverCalls++; return resolverAnswer; };
+
+        store.events = [{ id: 'local_a', title: 'Local A', dateKey: '2026-10-15', startTime: '09:00', endTime: '10:00' }];
+        await sm.syncNow();
+        assert(fake.row && sm.config.lastSyncedServerAt === fake.row.updated_at && sm.config.localDirty === false, 'Empty cloud: first sync inserts this device and records server updated_at');
+
+        fake.calls = [];
+        await sm.syncNow();
+        assert(!fake.calls.some(c => c.startsWith('PATCH')) && sm.status === 'synced', 'Nothing changed anywhere: sync does not push');
+
+        store.events.push({ id: 'local_b', title: 'Local B', dateKey: '2026-10-15', startTime: '11:00', endTime: '12:00' });
+        sm.markDirty();
+        await sm.syncNow();
+        assert(fake.row.payload.payload.events.length === 2 && sm.config.localDirty === false, 'Local edit, cloud unchanged: edit is pushed');
+
+        otherDeviceWrites([{ id: 'remote_x', title: 'From laptop', dateKey: '2026-10-16', startTime: '09:00', endTime: '10:00' }]);
+        await sm.syncNow();
+        assert(store.events.length === 1 && store.events[0].id === 'remote_x' && resolverCalls === 0, 'Cloud changed, no local edits: cloud version is applied without prompting');
+        store.undo();
+        assert(store.events.some(e => e.id === 'local_b'), 'Applying the cloud version can be undone');
+        store.redo();
+
+        otherDeviceWrites([{ id: 'remote_y', title: 'From phone', dateKey: '2026-10-17', startTime: '09:00', endTime: '10:00' }]);
+        store.events = [{ id: 'local_c', title: 'Unsynced local', dateKey: '2026-10-15', startTime: '09:00', endTime: '10:00' }];
+        sm.markDirty();
+        resolverAnswer = null;
+        await sm.syncNow();
+        assert(resolverCalls === 1 && sm.status === 'error' && store.events[0].id === 'local_c' && fake.row.payload.payload.events[0].id === 'remote_y', 'Both changed + "decide later": neither side is overwritten');
+
+        resolverAnswer = 'local';
+        await sm.syncNow();
+        assert(fake.row.payload.payload.events[0].id === 'local_c' && sm.config.localDirty === false, 'Conflict resolved with "keep this device": cloud gets local version');
+
+        otherDeviceWrites([{ id: 'remote_z', title: 'Tablet', dateKey: '2026-10-18', startTime: '09:00', endTime: '10:00' }]);
+        sm.markDirty();
+        resolverAnswer = 'cloud';
+        await sm.syncNow();
+        assert(store.events[0].id === 'remote_z' && sm.config.localDirty === false, 'Conflict resolved with "use cloud": local gets cloud version');
+
+        sm.markDirty();
+        fake.beforePatch = () => otherDeviceWrites([{ id: 'race', title: 'Race', dateKey: '2026-10-19', startTime: '09:00', endTime: '10:00' }]);
+        resolverAnswer = null;
+        const callsBefore = resolverCalls;
+        await sm.syncNow();
+        assert(fake.row.payload.payload.events[0].id === 'race' && resolverCalls === callsBefore + 1, 'Another device writing between pull and push is detected (conditional PATCH) and not overwritten');
+
+        resolverAnswer = 'cloud';
+        await sm.syncNow();
+        sm.config.accessToken = 'tok1';
+        fake.unauthorizedOnce = true;
+        sm.markDirty();
+        await sm.syncNow();
+        assert(sm.config.accessToken === 'tok2' && sm.status === 'synced', 'Expired access token is refreshed once and the request retried');
+
+        fake.alwaysUnauthorized = true;
+        fake.calls = [];
+        sm.markDirty();
+        await sm.syncNow();
+        assert(sm.status === 'error' && fake.calls.length <= 3, 'Persistent 401 fails cleanly instead of recursing forever');
+      } finally {
+        window.fetch = realFetch;
+      }
+
       summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
       summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
       window.__TESTS_PASSED__ = (failed === 0);

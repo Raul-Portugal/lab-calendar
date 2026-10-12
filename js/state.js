@@ -9,6 +9,19 @@ import { BUILT_IN_PROTOCOLS, shiftProtocolGroup as shiftProtoEvents, cascadeShif
 
 const DAY_CODE_MAP = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 
+// Notifications that only change what is displayed: nothing to persist
+const VIEW_ONLY_CHANGES = new Set(['date_change', 'view_change', 'hover_change']);
+// Notifications whose data did not originate from a local user edit (no cloud push)
+const NON_LOCAL_CHANGES = new Set(['storage_sync', 'cloud_pull', 'filter_change', ...VIEW_ONLY_CHANGES]);
+
+/**
+ * True when a notification represents a local edit of calendar data that
+ * should be marked as unsynced and pushed to the cloud.
+ */
+export function isLocalDataChange(changeType) {
+  return !NON_LOCAL_CHANGES.has(changeType);
+}
+
 export const DEFAULT_QUICK_CLASSES = [
   { id: 'qc_lab_meeting', title: 'Lab Meeting', duration: 90, color: 'emerald', category: 'Meeting' },
   { id: 'qc_bench_work', title: 'Bench Work', duration: 120, color: 'ocean', category: 'Bench Work' },
@@ -96,7 +109,9 @@ class StateStore {
   }
 
   notify(changeType = 'update') {
-    this.persist();
+    if (!VIEW_ONLY_CHANGES.has(changeType)) {
+      this.persist();
+    }
     for (const cb of this.listeners) {
       cb(changeType, this);
     }

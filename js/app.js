@@ -4,7 +4,7 @@
  * and Series + Exceptions Prompting
  */
 
-import { store } from './state.js';
+import { store, isLocalDataChange } from './state.js';
 import { CalendarRenderer } from './calendar.js';
 import { DragDropController } from './drag-drop.js';
 import { ProtocolBuilder } from './protocol-builder.js';
@@ -39,6 +39,7 @@ class LabCalendarApp {
     this.initEventListeners();
     this.initMiniCalendar();
     this.initCloudSyncModal();
+    this.initSyncConflictModal();
     this.initPwa();
 
     // Subscribe to state changes for automatic UI re-renders
@@ -230,16 +231,7 @@ class LabCalendarApp {
 
     this.exportJsonBtn?.addEventListener('click', () => {
       this.exportDropdown.classList.add('hidden');
-      exportStateToJson({
-        series: store.series,
-        exceptions: store.exceptions,
-        events: store.events,
-        quotas: store.quotas,
-        customProtocols: store.customProtocols,
-        quickClasses: store.quickClasses,
-        categories: store.categories,
-        settings: store.settings
-      });
+      this.exportBackup();
       this.showToast('Exported backup (.json)');
     });
 
@@ -254,20 +246,26 @@ class LabCalendarApp {
 
       const reader = new FileReader();
       reader.onload = (event) => {
+        let parsed;
         try {
-          const parsed = JSON.parse(event.target.result);
-          if (parsed.series) store.series = parsed.series;
-          if (parsed.exceptions) store.exceptions = parsed.exceptions;
-          if (parsed.events) store.events = parsed.events;
-          if (parsed.quotas) store.quotas = parsed.quotas;
-          if (parsed.customProtocols) store.customProtocols = parsed.customProtocols;
-          if (parsed.quickClasses) store.quickClasses = parsed.quickClasses;
-          if (parsed.categories) store.categories = parsed.categories;
-          store.notify('import');
-          this.showToast('Calendar restored successfully!');
+          parsed = JSON.parse(event.target.result);
         } catch (err) {
           alert('Invalid backup JSON file.');
+          return;
         }
+        const hasCalendarData = parsed && typeof parsed === 'object' &&
+          ['events', 'series', 'quotas', 'customProtocols', 'categories'].some((k) => Array.isArray(parsed[k]));
+        if (!hasCalendarData) {
+          alert('This file does not look like a LabCal backup.');
+          return;
+        }
+        if (!confirm('Replace the current calendar with this backup? You can undo with Ctrl+Z.')) return;
+
+        // Undoable, and synced to the cloud like any other edit
+        store.pushHistorySnapshot('Import backup');
+        store.applyData(parsed);
+        store.notify('backup_import');
+        this.showToast('Calendar restored successfully!');
       };
       reader.readAsText(file);
       e.target.value = '';
@@ -319,8 +317,9 @@ class LabCalendarApp {
     this.renderCategoryFilters();
     this.renderMiniCalendar();
 
-    // Trigger debounced cloud auto-sync if not an external import
-    if (changeType !== 'import') {
+    // Only real local data edits are marked unsynced and pushed (not navigation, hover, filters or cloud pulls)
+    if (isLocalDataChange(changeType)) {
+      this.syncManager.markDirty();
       this.syncManager.scheduleAutoSync();
     }
   }
@@ -1447,11 +1446,11 @@ class LabCalendarApp {
 
     // Manual Sync
     const handleSync = async () => {
-      try {
-        await this.syncManager.syncNow();
+      await this.syncManager.syncNow();
+      if (this.syncManager.status === 'synced') {
         this.showToast('Synchronized with cloud!');
-      } catch (err) {
-        alert(`Sync failed: ${err.message}`);
+      } else if (this.syncManager.status === 'error') {
+        this.showToast(`Sync: ${this.syncManager.statusDetails}`);
       }
     };
     this.syncNowBtn?.addEventListener('click', handleSync);
@@ -1463,6 +1462,11 @@ class LabCalendarApp {
       const key = (this.syncAnonKeyInput.value || '').trim();
       const pass = (this.syncPassphraseInput.value || '').trim();
 
+      if (this.syncManager.formatBaseUrl(url) !== this.syncManager.formatBaseUrl(this.syncManager.config.supabaseUrl)) {
+        // Different project: this device has never synced with it
+        this.syncManager.config.lastSyncedServerAt = null;
+        this.syncManager.config.localDirty = true;
+      }
       this.syncManager.config.supabaseUrl = url;
       this.syncManager.config.supabaseAnonKey = key;
       this.syncManager.config.passphrase = pass;
@@ -1549,6 +1553,53 @@ class LabCalendarApp {
 
   closeCloudSyncModal() {
     this.cloudSyncModal?.classList.add('hidden');
+  }
+
+  exportBackup() {
+    exportStateToJson({
+      series: store.series,
+      exceptions: store.exceptions,
+      events: store.events,
+      quotas: store.quotas,
+      customProtocols: store.customProtocols,
+      deletedProtocolIds: Array.from(store.deletedProtocolIds),
+      quickClasses: store.quickClasses,
+      categories: store.categories,
+      settings: {
+        use24Hour: store.settings.use24Hour,
+        visibleCategories: Array.from(store.visibleCategories)
+      }
+    });
+  }
+
+  /**
+   * Ask which version wins when both this device and the cloud changed.
+   * Resolves to 'local', 'cloud' or null (decide later).
+   */
+  initSyncConflictModal() {
+    const modal = document.getElementById('syncConflictModal');
+    const localBtn = document.getElementById('syncConflictLocalBtn');
+    const cloudBtn = document.getElementById('syncConflictCloudBtn');
+    const cancelBtn = document.getElementById('syncConflictCancelBtn');
+    const backupBtn = document.getElementById('syncConflictBackupBtn');
+    if (!modal) return;
+
+    backupBtn?.addEventListener('click', () => {
+      this.exportBackup();
+      this.showToast('Downloaded a backup of this device.');
+    });
+
+    this.syncManager.conflictResolver = () => new Promise((resolve) => {
+      const finish = (choice) => {
+        modal.classList.add('hidden');
+        localBtn.onclick = cloudBtn.onclick = cancelBtn.onclick = null;
+        resolve(choice);
+      };
+      localBtn.onclick = () => finish('local');
+      cloudBtn.onclick = () => finish('cloud');
+      cancelBtn.onclick = () => finish(null);
+      modal.classList.remove('hidden');
+    });
   }
 
   showToast(message) {
