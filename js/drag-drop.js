@@ -15,7 +15,8 @@ import {
   shiftDateKey,
   formatTimeDisplay,
   getCategoryDefaultColor,
-  escapeHtml
+  escapeHtml,
+  isSmallScreen
 } from './utils.js';
 import { instantiateProtocol } from './protocols.js';
 import { createEventFromQuota, calculateWeeklyQuotaStats, getSuggestedQuotaDuration } from './quotas.js';
@@ -29,7 +30,11 @@ export class DragDropController {
 
     this.ghostPreviewEl = null;
     this.draftContext = null;
-    this.wasDragging = false;
+    // Clicks that are really the end of a drag / resize / long-press are ignored until this time.
+    // A time window (instead of a boolean) cannot swallow an unrelated later click.
+    this.suppressClicksUntil = 0;
+    this.pendingPlacement = null;
+    this.touchInteractionActive = false;
 
     this.init();
   }
@@ -66,6 +71,54 @@ export class DragDropController {
       }
       this.removeGhostPreview();
     });
+
+    // Touch / pen fallback (HTML5 drag & drop does not work on touch screens):
+    // tap a protocol, quota or quick class, then tap a time slot to place it.
+    document.addEventListener('pointerdown', (e) => {
+      this.lastPointerType = e.pointerType;
+    }, true);
+
+    document.addEventListener('click', (e) => {
+      if (this.lastPointerType !== 'touch' && this.lastPointerType !== 'pen') return;
+      const source = e.target.closest('[data-drag-type]');
+      if (!source || e.target.closest('button')) return;
+      this.armPlacement(source);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.pendingPlacement) this.disarmPlacement();
+    });
+  }
+
+  armPlacement(source) {
+    const wasSame = this.pendingPlacement?.source === source;
+    this.disarmPlacement();
+    if (wasSame) return; // second tap on the same item cancels
+
+    this.pendingPlacement = {
+      source,
+      type: source.dataset.dragType,
+      payload: source.dataset.dragPayload
+    };
+    source.classList.add('is-armed-source');
+    // On phones the sidebar covers the calendar: get it out of the way
+    if (isSmallScreen()) document.getElementById('appSidebar')?.classList.add('collapsed');
+    this.showToast('Now tap a time slot in the calendar to place it (tap the item again to cancel).');
+  }
+
+  disarmPlacement() {
+    this.pendingPlacement?.source?.classList.remove('is-armed-source');
+    this.pendingPlacement = null;
+  }
+
+  placePendingAt(dayCol, clientY) {
+    const pending = this.pendingPlacement;
+    if (!pending || !dayCol.dataset.dateKey) return;
+    const rect = dayCol.getBoundingClientRect();
+    const startMinute = snapToGrid(clamp(clientY - rect.top, 0, 1425), 15);
+    this.disarmPlacement();
+    this.suppressNextClick();
+    this.handleSidebarDrop({ type: pending.type, payload: pending.payload }, dayCol.dataset.dateKey, startMinute);
   }
 
   /**
@@ -170,35 +223,20 @@ export class DragDropController {
   initInCalendarEventInteractions() {
     const container = this.calendar.container;
 
-    container.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-
-      const resizeHandle = e.target.closest('.resize-handle');
-      const eventCard = e.target.closest('.cal-event-card');
-
-      if (resizeHandle && eventCard) {
-        e.preventDefault();
-        e.stopPropagation();
-        this.startResizing(eventCard, resizeHandle, e);
-      } else if (eventCard) {
-        if (e.target.closest('.action-btn')) return;
-        e.preventDefault();
-        this.startMovingEvent(eventCard, e);
+    // Pointer events cover mouse, pen and touch. Touch uses long-press so that a normal
+    // swipe still scrolls the calendar.
+    container.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !e.isPrimary) return;
+      if (e.pointerType === 'touch') {
+        this.handleTouchPointerDown(e);
       } else {
-        const dayCol = e.target.closest('.cal-day-column');
-        if (dayCol) {
-          e.preventDefault();
-          this.startDraftEventCreation(dayCol, e);
-        }
+        this.beginGridInteraction(e.target, e);
       }
     });
 
     // Single-click on event to view/edit
     container.addEventListener('click', (e) => {
-      if (this.wasDragging) {
-        this.wasDragging = false;
-        return;
-      }
+      if (Date.now() < this.suppressClicksUntil) return;
 
       const eventCard = e.target.closest('.cal-event-card');
       if (eventCard) {
@@ -218,6 +256,84 @@ export class DragDropController {
         }
       }
     });
+  }
+
+  /**
+   * Start a resize / move / draft-creation / tap-to-place depending on what was pressed.
+   * startEvent only needs clientX, clientY and preventDefault().
+   */
+  beginGridInteraction(target, startEvent, isTouch = false) {
+    const resizeHandle = target.closest('.resize-handle');
+    const eventCard = target.closest('.cal-event-card');
+    const dayCol = target.closest('.cal-day-column');
+
+    if (this.pendingPlacement && dayCol && !eventCard) {
+      startEvent.preventDefault();
+      this.placePendingAt(dayCol, startEvent.clientY);
+    } else if (resizeHandle && eventCard) {
+      startEvent.preventDefault();
+      this.startResizing(eventCard, resizeHandle, startEvent);
+    } else if (eventCard) {
+      if (target.closest('.action-btn')) return;
+      startEvent.preventDefault();
+      this.startMovingEvent(eventCard, startEvent, isTouch);
+    } else if (dayCol) {
+      startEvent.preventDefault();
+      this.startDraftEventCreation(dayCol, startEvent);
+    }
+  }
+
+  /**
+   * Touch: a quick swipe scrolls; a tap places an armed sidebar item; a ~350 ms
+   * long-press picks up the event (or starts a new one) and blocks scrolling until release.
+   */
+  handleTouchPointerDown(e) {
+    const start = { x: e.clientX, y: e.clientY, target: e.target };
+    let timer = null;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', cleanup);
+    };
+    const onMove = (ev) => {
+      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) cleanup(); // user is scrolling
+    };
+    const onUp = () => {
+      cleanup();
+      const dayCol = start.target.closest('.cal-day-column');
+      if (this.pendingPlacement && dayCol && !start.target.closest('.cal-event-card')) {
+        this.placePendingAt(dayCol, start.y);
+      }
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      if (this.pendingPlacement) return;
+      this.blockTouchScrollUntilRelease();
+      navigator.vibrate?.(15);
+      this.beginGridInteraction(start.target, { clientX: start.x, clientY: start.y, preventDefault() {} }, true);
+    }, 350);
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', cleanup);
+  }
+
+  blockTouchScrollUntilRelease() {
+    this.touchInteractionActive = true;
+    const prevent = (ev) => { if (ev.cancelable) ev.preventDefault(); };
+    const release = () => {
+      document.removeEventListener('touchmove', prevent);
+      document.removeEventListener('touchend', release);
+      document.removeEventListener('touchcancel', release);
+      // Let the click / contextmenu that follows the release see the flag first
+      setTimeout(() => { this.touchInteractionActive = false; }, 0);
+    };
+    document.addEventListener('touchmove', prevent, { passive: false });
+    document.addEventListener('touchend', release);
+    document.addEventListener('touchcancel', release);
   }
 
   /**
@@ -263,16 +379,22 @@ export class DragDropController {
       }
     };
 
-    const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+    const onMouseUp = (upEvt) => {
+      document.removeEventListener('pointermove', onMouseMove);
+      document.removeEventListener('pointerup', onMouseUp);
+      document.removeEventListener('pointercancel', onMouseUp);
 
       if (!this.draftContext) return;
+      if (upEvt.type === 'pointercancel') {
+        this.closeQuickCreatePopover();
+        return;
+      }
       this.openQuickCreatePopover(this.draftContext);
     };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointermove', onMouseMove);
+    document.addEventListener('pointerup', onMouseUp);
+    document.addEventListener('pointercancel', onMouseUp);
   }
 
   initQuickCreatePopover() {
@@ -302,7 +424,7 @@ export class DragDropController {
       }
     });
 
-    document.addEventListener('mousedown', (e) => {
+    document.addEventListener('pointerdown', (e) => {
       if (this.popoverEl && !this.popoverEl.classList.contains('hidden')) {
         if (!this.popoverEl.contains(e.target) && !e.target.closest('.cal-draft-event')) {
           this.closeQuickCreatePopover();
@@ -416,7 +538,7 @@ export class DragDropController {
     }
   }
 
-  startMovingEvent(eventCard, startEvent) {
+  startMovingEvent(eventCard, startEvent, isTouch = false) {
     const eventId = eventCard.dataset.eventId;
     const isSeries = eventCard.dataset.isSeriesOccurrence === 'true';
     const seriesId = eventCard.dataset.seriesId;
@@ -436,6 +558,8 @@ export class DragDropController {
     const duration = origEndMin - origStartMin;
 
     const isChained = evt.isChained && evt.protocolGroupId;
+    // Keep the point where the card was grabbed under the pointer (1px = 1 minute)
+    const grabOffsetMin = clamp(startY - eventCard.getBoundingClientRect().top, 0, duration);
     let didMove = false;
 
     eventCard.classList.add('is-being-dragged');
@@ -446,7 +570,7 @@ export class DragDropController {
 
       if (!didMove && (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4)) {
         didMove = true;
-        this.wasDragging = true;
+        this.suppressNextClick();
       }
       if (!didMove) return;
 
@@ -455,7 +579,7 @@ export class DragDropController {
 
       const rect = dayCol.getBoundingClientRect();
       const relativeY = moveEvent.clientY - rect.top;
-      const targetStartMin = snapToGrid(clamp(relativeY - (duration / 2), 0, 1440 - duration), 15);
+      const targetStartMin = snapToGrid(clamp(relativeY - grabOffsetMin, 0, 1440 - duration), 15);
 
       const isShift = moveEvent.shiftKey;
       const isCtrl = moveEvent.ctrlKey || moveEvent.metaKey;
@@ -474,20 +598,29 @@ export class DragDropController {
     };
 
     const onMouseUp = (upEvent) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      document.removeEventListener('pointermove', onMouseMove);
+      document.removeEventListener('pointerup', onMouseUp);
+      document.removeEventListener('pointercancel', onMouseUp);
 
       eventCard.classList.remove('is-being-dragged');
       this.removeGhostPreview();
 
-      if (!didMove) return;
+      if (upEvent.type === 'pointercancel') return;
+      if (!didMove) {
+        // Touch long-press released without moving: show the event's action menu
+        if (isTouch) {
+          this.suppressNextClick();
+          this.openContextMenu(eventCard, upEvent.clientX, upEvent.clientY);
+        }
+        return;
+      }
 
       const dayCol = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('.cal-day-column');
       if (!dayCol) return;
 
       const rect = dayCol.getBoundingClientRect();
       const relativeY = upEvent.clientY - rect.top;
-      const newStartMin = snapToGrid(clamp(relativeY - (duration / 2), 0, 1440 - duration), 15);
+      const newStartMin = snapToGrid(clamp(relativeY - grabOffsetMin, 0, 1440 - duration), 15);
       const newEndMin = newStartMin + duration;
       const newDateKey = dayCol.dataset.dateKey;
 
@@ -545,8 +678,9 @@ export class DragDropController {
       }
     };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointermove', onMouseMove);
+    document.addEventListener('pointerup', onMouseUp);
+    document.addEventListener('pointercancel', onMouseUp);
   }
 
   startResizing(eventCard, handle, startEvent) {
@@ -588,9 +722,18 @@ export class DragDropController {
     };
 
     const onMouseUp = (upEvent) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      document.removeEventListener('pointermove', onMouseMove);
+      document.removeEventListener('pointerup', onMouseUp);
+      document.removeEventListener('pointercancel', onMouseUp);
       eventCard.classList.remove('is-resizing');
+
+      if (upEvent.type === 'pointercancel' || (curStartMin === origStartMin && curEndMin === origEndMin)) {
+        eventCard.style.top = `${origStartMin}px`;
+        eventCard.style.height = `${origEndMin - origStartMin}px`;
+        return;
+      }
+      // The release would otherwise count as a click and open the edit dialog
+      this.suppressNextClick();
 
       const isCtrl = upEvent.ctrlKey || upEvent.metaKey;
 
@@ -624,8 +767,9 @@ export class DragDropController {
       }
     };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointermove', onMouseMove);
+    document.addEventListener('pointerup', onMouseUp);
+    document.addEventListener('pointercancel', onMouseUp);
   }
 
   /**
@@ -635,46 +779,23 @@ export class DragDropController {
     const menuEl = document.getElementById('eventContextMenu');
     if (!menuEl) return;
 
+    this.contextMenuEl = menuEl;
+
     this.calendar.container.addEventListener('contextmenu', (e) => {
+      // Touch long-press is handled by our own gesture (drag, or release to open the menu)
+      if (this.touchInteractionActive || e.pointerType === 'touch') {
+        e.preventDefault();
+        return;
+      }
       const eventCard = e.target.closest('.cal-event-card');
       if (!eventCard) return;
 
       e.preventDefault();
-      const eventId = eventCard.dataset.eventId;
-      const isSeries = eventCard.dataset.isSeriesOccurrence === 'true';
-      const seriesId = eventCard.dataset.seriesId;
-      const occurrenceDate = eventCard.dataset.occurrenceDate;
-
-      const evt = isSeries
-        ? this.getOccurrenceEvent(seriesId, occurrenceDate)
-        : this.store.events.find((item) => item.id === eventId);
-      if (!evt) return;
-
-      this.activeContextEvent = evt;
-
-      menuEl.style.top = `${Math.min(window.innerHeight - 280, e.clientY)}px`;
-      menuEl.style.left = `${Math.min(window.innerWidth - 240, e.clientX)}px`;
-      menuEl.classList.remove('hidden');
-
-      // Adjust group options
-      const groupShiftOption = menuEl.querySelector('[data-action="shift-group"]');
-      const cascadeOption = menuEl.querySelector('[data-action="cascade-shift"]');
-      const deleteGroupOption = menuEl.querySelector('[data-action="delete-group"]');
-
-      if (groupShiftOption && cascadeOption && deleteGroupOption) {
-        if (evt.protocolGroupId) {
-          groupShiftOption.classList.remove('hidden');
-          cascadeOption.classList.remove('hidden');
-          deleteGroupOption.classList.remove('hidden');
-        } else {
-          groupShiftOption.classList.add('hidden');
-          cascadeOption.classList.add('hidden');
-          deleteGroupOption.classList.add('hidden');
-        }
-      }
+      this.openContextMenu(eventCard, e.clientX, e.clientY);
     });
 
     document.addEventListener('click', (e) => {
+      if (Date.now() < this.suppressClicksUntil) return;
       if (!e.target.closest('#eventContextMenu')) {
         menuEl.classList.add('hidden');
       }
@@ -732,6 +853,32 @@ export class DragDropController {
         }
       }
     });
+  }
+
+  openContextMenu(eventCard, clientX, clientY) {
+    const menuEl = this.contextMenuEl;
+    if (!menuEl) return;
+
+    const isSeries = eventCard.dataset.isSeriesOccurrence === 'true';
+    const evt = isSeries
+      ? this.getOccurrenceEvent(eventCard.dataset.seriesId, eventCard.dataset.occurrenceDate)
+      : this.store.events.find((item) => item.id === eventCard.dataset.eventId);
+    if (!evt) return;
+
+    this.activeContextEvent = evt;
+
+    menuEl.style.top = `${Math.max(8, Math.min(window.innerHeight - 280, clientY))}px`;
+    menuEl.style.left = `${Math.max(8, Math.min(window.innerWidth - 240, clientX))}px`;
+    menuEl.classList.remove('hidden');
+
+    // Group options only apply to chained protocol steps
+    ['shift-group', 'cascade-shift', 'delete-group'].forEach((action) => {
+      menuEl.querySelector(`[data-action="${action}"]`)?.classList.toggle('hidden', !evt.protocolGroupId);
+    });
+  }
+
+  suppressNextClick() {
+    this.suppressClicksUntil = Date.now() + 400;
   }
 
   // The rendered occurrence of a recurring series, including its exception override

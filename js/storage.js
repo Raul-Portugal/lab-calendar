@@ -31,8 +31,8 @@ export function getInitialSeedData() {
 
   // Tuesday of current week for sample thesis writing quota block
   const tuesdayKey = formatDateKey(weekDates[1]);
-  // Thursday of current week for initial Western Blot showcase (avoids Wednesday lab meeting collision!)
-  const thursdayKey = formatDateKey(weekDates[3]);
+  // Sample series start on the Monday of the first install week
+  const seriesFromKey = formatDateKey(weekDates[0]);
 
   // Recurring Series (Seed)
   const defaultSeries = [
@@ -42,7 +42,7 @@ export function getInitialSeedData() {
       rule: { freq: 'WEEKLY', byDay: ['WE'] },
       startTime: '09:30',
       endTime: '12:00',
-      from: '2026-09-01',
+      from: seriesFromKey,
       until: null,
       color: 'emerald',
       category: 'Meeting',
@@ -54,7 +54,7 @@ export function getInitialSeedData() {
       rule: { freq: 'WEEKLY', byDay: ['FR'] },
       startTime: '15:00',
       endTime: '16:30',
-      from: '2026-09-01',
+      from: seriesFromKey,
       until: null,
       color: 'ocean',
       category: 'Meeting',

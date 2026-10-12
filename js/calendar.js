@@ -443,19 +443,17 @@ export class CalendarRenderer {
 
     const onGlobalMouseMove = (e) => {
       if (!isDragging) return;
-      let cell = e.target?.closest?.('.month-cell');
+      // elementFromPoint, not e.target: with pointer capture e.target stays the start cell
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      let cell = target?.closest?.('.month-cell');
       if (!cell) {
-        const target = document.elementFromPoint(e.clientX, e.clientY);
-        cell = target?.closest?.('.month-cell');
-        if (!cell) {
-          const weekRow = (target || e.target)?.closest?.('.month-week-row');
-          if (weekRow) {
-            const rect = weekRow.getBoundingClientRect();
-            const relX = Math.max(0, Math.min(e.clientX - rect.left, rect.width - 1));
-            const colIdx = Math.min(6, Math.max(0, Math.floor((relX / rect.width) * 7)));
-            const daysBg = weekRow.querySelector('.month-week-days-bg');
-            cell = daysBg?.children[colIdx];
-          }
+        const weekRow = (target || e.target)?.closest?.('.month-week-row');
+        if (weekRow) {
+          const rect = weekRow.getBoundingClientRect();
+          const relX = Math.max(0, Math.min(e.clientX - rect.left, rect.width - 1));
+          const colIdx = Math.min(6, Math.max(0, Math.floor((relX / rect.width) * 7)));
+          const daysBg = weekRow.querySelector('.month-week-days-bg');
+          cell = daysBg?.children[colIdx];
         }
       }
       if (cell && cell.dataset.dateKey && cell.dataset.dateKey !== dragCurrentKey) {
@@ -467,8 +465,8 @@ export class CalendarRenderer {
     const onGlobalMouseUp = () => {
       if (!isDragging) return;
       isDragging = false;
-      window.removeEventListener('mousemove', onGlobalMouseMove);
-      window.removeEventListener('mouseup', onGlobalMouseUp);
+      window.removeEventListener('pointermove', onGlobalMouseMove);
+      window.removeEventListener('pointerup', onGlobalMouseUp);
 
       monthViewContainer.querySelectorAll('.month-cell.is-drag-selected').forEach((c) => {
         c.classList.remove('is-drag-selected');
@@ -516,7 +514,7 @@ export class CalendarRenderer {
         dateNumber.textContent = cellDate.getDate();
 
         // Clicking date number navigates to Day View
-        dateNumber.addEventListener('mousedown', (e) => e.stopPropagation());
+        dateNumber.addEventListener('pointerdown', (e) => e.stopPropagation());
         dateNumber.addEventListener('click', (e) => {
           e.stopPropagation();
           this.store.setDate(cellDate);
@@ -533,15 +531,31 @@ export class CalendarRenderer {
           }
         });
 
-        // Click-and-drag start on cell
-        cellEl.addEventListener('mousedown', (e) => {
-          if (e.button !== 0) return;
+        // Click-and-drag start on cell (mouse / pen). Touch: a tap creates an all-day
+        // event on that day, while a swipe keeps scrolling the page.
+        cellEl.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0 || !e.isPrimary) return;
+          if (e.pointerType === 'touch') {
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const onTouchEnd = (up) => {
+              window.removeEventListener('pointerup', onTouchEnd);
+              window.removeEventListener('pointercancel', onTouchEnd);
+              if (up.type === 'pointerup' && Math.hypot(up.clientX - startX, up.clientY - startY) < 10) {
+                window.app?.openEventEditModal({ isAllDay: true, dateKey, endDateKey: dateKey, title: '' });
+              }
+            };
+            window.addEventListener('pointerup', onTouchEnd);
+            window.addEventListener('pointercancel', onTouchEnd);
+            return;
+          }
+          e.preventDefault();
           isDragging = true;
           dragStartKey = dateKey;
           dragCurrentKey = dateKey;
           updateHighlight(dragStartKey, dragCurrentKey);
-          window.addEventListener('mousemove', onGlobalMouseMove);
-          window.addEventListener('mouseup', onGlobalMouseUp);
+          window.addEventListener('pointermove', onGlobalMouseMove);
+          window.addEventListener('pointerup', onGlobalMouseUp);
         });
 
         daysBg.appendChild(cellEl);
@@ -614,7 +628,7 @@ export class CalendarRenderer {
         bar.innerHTML = `<span class="allday-title">${escapeHtml(evt.title)}${spanLabel}</span>`;
         bar.title = `${evt.title} (${startKey}${endKey !== startKey ? ' to ' + endKey : ''})`;
 
-        bar.addEventListener('mousedown', (e) => e.stopPropagation());
+        bar.addEventListener('pointerdown', (e) => e.stopPropagation());
         bar.addEventListener('click', (e) => {
           e.stopPropagation();
           window.app?.openEventEditModal(evt);
@@ -635,7 +649,7 @@ export class CalendarRenderer {
         pill.title = `${evt.startTime || ''} ${evt.title}`;
         pill.innerHTML = `<span class="pill-dot"></span><span class="pill-text">${evt.startTime ? escapeHtml(evt.startTime) + ' ' : ''}${escapeHtml(evt.title)}</span>`;
 
-        pill.addEventListener('mousedown', (e) => e.stopPropagation());
+        pill.addEventListener('pointerdown', (e) => e.stopPropagation());
         pill.addEventListener('click', (e) => {
           e.stopPropagation();
           window.app?.openEventEditModal(evt);

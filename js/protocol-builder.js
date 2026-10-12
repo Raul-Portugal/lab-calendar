@@ -7,6 +7,13 @@
 import { generateId, formatDuration, escapeHtml, safeColor } from './utils.js';
 import { exportSingleProtocol } from './storage.js';
 
+// Whole minutes within [min, 1440]; fallback for empty / invalid input
+function clampMinutes(value, min, fallback) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || value === '') return fallback;
+  return Math.min(1440, Math.max(min, n));
+}
+
 export class ProtocolBuilder {
   constructor(store, onProtocolSaved) {
     this.store = store;
@@ -189,27 +196,13 @@ export class ProtocolBuilder {
           </div>
 
           <div class="form-group ${isAnchored ? 'hidden' : ''} step-gap-wrapper">
-            <label>Wait Gap Before</label>
-            <select class="input-sm step-gap-select">
-              <option value="0" ${step.gapMinutes === 0 ? 'selected' : ''}>0 min (Immediate)</option>
-              <option value="15" ${step.gapMinutes === 15 ? 'selected' : ''}>15 min gap</option>
-              <option value="30" ${step.gapMinutes === 30 ? 'selected' : ''}>30 min gap</option>
-              <option value="60" ${step.gapMinutes === 60 ? 'selected' : ''}>1 hour gap</option>
-            </select>
+            <label>Wait Gap Before (min)</label>
+            <input type="number" class="input-sm step-gap-input" min="0" max="1440" step="5" inputmode="numeric" value="${escapeHtml(step.gapMinutes || 0)}" />
           </div>
 
           <div class="form-group">
-            <label>Duration</label>
-            <select class="input-sm step-duration-select">
-              <option value="15" ${step.durationMinutes === 15 ? 'selected' : ''}>15 min</option>
-              <option value="30" ${step.durationMinutes === 30 ? 'selected' : ''}>30 min</option>
-              <option value="45" ${step.durationMinutes === 45 ? 'selected' : ''}>45 min</option>
-              <option value="60" ${step.durationMinutes === 60 ? 'selected' : ''}>1 hour</option>
-              <option value="90" ${step.durationMinutes === 90 ? 'selected' : ''}>1.5 hours</option>
-              <option value="120" ${step.durationMinutes === 120 ? 'selected' : ''}>2 hours</option>
-              <option value="150" ${step.durationMinutes === 150 ? 'selected' : ''}>2.5 hours</option>
-              <option value="180" ${step.durationMinutes === 180 ? 'selected' : ''}>3 hours</option>
-            </select>
+            <label>Duration (min)</label>
+            <input type="number" class="input-sm step-duration-input" min="5" max="1440" step="5" inputmode="numeric" value="${escapeHtml(step.durationMinutes || 30)}" />
           </div>
 
           <div class="form-group">
@@ -250,13 +243,15 @@ export class ProtocolBuilder {
         this.renderTimelinePreview();
       });
 
-      stepRow.querySelector('.step-gap-select')?.addEventListener('change', (e) => {
-        step.gapMinutes = parseInt(e.target.value, 10);
+      stepRow.querySelector('.step-gap-input')?.addEventListener('change', (e) => {
+        step.gapMinutes = clampMinutes(e.target.value, 0, 0);
+        e.target.value = step.gapMinutes;
         this.renderTimelinePreview();
       });
 
-      stepRow.querySelector('.step-duration-select').addEventListener('change', (e) => {
-        step.durationMinutes = parseInt(e.target.value, 10);
+      stepRow.querySelector('.step-duration-input').addEventListener('change', (e) => {
+        step.durationMinutes = clampMinutes(e.target.value, 5, 30);
+        e.target.value = step.durationMinutes;
         this.renderTimelinePreview();
       });
 

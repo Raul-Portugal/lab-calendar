@@ -24,7 +24,8 @@ import {
   parseDateKey,
   getCategoryDefaultColor,
   escapeHtml,
-  safeColor
+  safeColor,
+  isSmallScreen
 } from './utils.js';
 
 class LabCalendarApp {
@@ -141,6 +142,21 @@ class LabCalendarApp {
     // Sidebar toggle
     this.sidebarToggleBtn?.addEventListener('click', () => {
       this.sidebarEl.classList.toggle('collapsed');
+    });
+
+    // Phones: start on the day view with the sidebar hidden (it slides over the calendar)
+    if (isSmallScreen()) {
+      this.sidebarEl?.classList.add('collapsed');
+      store.currentView = 'day';
+      this.viewBtns.forEach((b) => b.classList.toggle('active', b.dataset.view === 'day'));
+    }
+
+    // Phones: tapping outside the open sidebar closes it
+    document.addEventListener('pointerdown', (e) => {
+      if (!isSmallScreen() || !this.sidebarEl || this.sidebarEl.classList.contains('collapsed')) return;
+      if (this.sidebarEl.contains(e.target) || this.sidebarToggleBtn?.contains(e.target)) return;
+      if (e.target.closest('.modal-backdrop')) return;
+      this.sidebarEl.classList.add('collapsed');
     });
 
     // Date navigation

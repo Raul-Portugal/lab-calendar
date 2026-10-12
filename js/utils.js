@@ -304,6 +304,11 @@ export function calculateDaysBetween(startDateKey, endDateKey) {
   return Math.round(diffTime / (1000 * 60 * 60 * 24));
 }
 
+// Phone-sized layout (matches the breakpoint in css/responsive.css)
+export function isSmallScreen() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)').matches;
+}
+
 // Escape HTML special characters for safe innerHTML injection
 export function escapeHtml(str) {
   if (str === null || str === undefined || str === '') return '';

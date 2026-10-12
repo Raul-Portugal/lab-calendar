@@ -3,7 +3,7 @@
  * Enables PWA installation, instant loading, and 100% offline functionality
  */
 
-const CACHE_NAME = 'labcal-cache-v1';
+const CACHE_NAME = 'labcal-cache-v2';
 
 const STATIC_ASSETS = [
   './',
@@ -13,6 +13,7 @@ const STATIC_ASSETS = [
   './css/calendar.css',
   './css/sidebar.css',
   './css/modal.css',
+  './css/responsive.css',
   './js/app.js',
   './js/state.js',
   './js/calendar.js',
@@ -57,29 +58,23 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Network-only for external API calls (e.g. Supabase Auth and Database)
-  if (url.origin !== self.location.origin) {
-    event.respondWith(fetch(event.request));
+  // Let the browser handle external API calls (Supabase) and non-GET requests directly
+  if (url.origin !== self.location.origin || event.request.method !== 'GET') {
     return;
   }
 
-  // Stale-While-Revalidate for local assets
+  // Network-first for app files, so updates are picked up on the next load
+  // (stale-while-revalidate served the previous version once after every deploy).
+  // The cache is the offline fallback.
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
+    fetch(event.request)
+      .then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200) {
           const clone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, clone);
-          });
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return networkResponse;
-      }).catch(() => {
-        // Offline fallback if fetch fails
-        return cachedResponse;
-      });
-
-      return cachedResponse || fetchPromise;
-    })
+      })
+      .catch(() => caches.match(event.request, { ignoreSearch: true }))
   );
 });
