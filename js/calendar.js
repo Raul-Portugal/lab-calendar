@@ -30,6 +30,10 @@ export class CalendarRenderer {
   }
 
   render() {
+    // Keep the user's scroll position across re-renders of the time grid;
+    // only scroll to the start of the work day on first display.
+    const prevScrollEl = document.getElementById('calendarScrollBody');
+    this.preservedScrollTop = prevScrollEl ? prevScrollEl.scrollTop : null;
     this.container.innerHTML = '';
 
     if (this.store.currentView === 'month') {
@@ -112,7 +116,9 @@ export class CalendarRenderer {
     allDayGrid.style.gridTemplateColumns = `repeat(${dates.length}, 1fr)`;
 
     // Filter all-day and multi-day events
-    const allDayEvents = expandedEvents.filter((e) => e.isAllDay || (e.endDateKey && e.endDateKey !== e.dateKey));
+    const allDayEvents = expandedEvents.filter((e) => (
+      (e.isAllDay || (e.endDateKey && e.endDateKey !== e.dateKey)) && this.matchesFilters(e)
+    ));
     this.renderAllDayEvents(allDayGrid, dates, allDayEvents);
 
     allDayRow.appendChild(allDayGrid);
@@ -192,14 +198,11 @@ export class CalendarRenderer {
 
     this.container.appendChild(gridWrapper);
 
-    // Measure scrollbar width immediately to perfectly align day headers with body columns
+    // Restore scroll synchronously (no flash), then measure scrollbar width to align headers
+    scrollContainer.scrollTop = this.preservedScrollTop ?? 8.5 * this.hourHeight;
     requestAnimationFrame(() => {
-      const scrollEl = document.getElementById('calendarScrollBody');
-      if (scrollEl) {
-        const scrollbarWidth = scrollEl.offsetWidth - scrollEl.clientWidth;
-        document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
-        scrollEl.scrollTop = 8.5 * this.hourHeight;
-      }
+      const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
+      document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
     });
   }
 
@@ -208,23 +211,9 @@ export class CalendarRenderer {
    */
   renderEventsForDay(dayColumn, dateKey, allExpandedEvents) {
     // Filter events for this day (exclude all-day events, as they render in all-day banner grid)
-    const dayEvents = allExpandedEvents.filter((evt) => {
-      if (evt.isAllDay) return false;
-      if (evt.dateKey !== dateKey) return false;
-      // Search filter
-      if (this.store.searchQuery) {
-        const q = this.store.searchQuery;
-        const matchTitle = evt.title.toLowerCase().includes(q);
-        const matchProto = evt.protocolName && evt.protocolName.toLowerCase().includes(q);
-        const matchNotes = evt.notes && evt.notes.toLowerCase().includes(q);
-        if (!matchTitle && !matchProto && !matchNotes) return false;
-      }
-      // Category filter
-      if (evt.category && !this.store.visibleCategories.has(evt.category)) {
-        return false;
-      }
-      return true;
-    });
+    const dayEvents = allExpandedEvents.filter((evt) => (
+      !evt.isAllDay && evt.dateKey === dateKey && this.matchesFilters(evt)
+    ));
 
     // Compute overlapping column layout
     const layout = computeEventLayout(dayEvents);
@@ -340,17 +329,46 @@ export class CalendarRenderer {
         <div class="resize-handle resize-handle-bottom" title="Drag to adjust end time"></div>
       `;
 
-      // Hover group linking highlight
+      // Hover group linking highlight (toggled in place: re-rendering would reset drag/scroll state)
       if (evt.protocolGroupId) {
         card.addEventListener('mouseenter', () => {
           this.store.setHoveredProtocolGroup(evt.protocolGroupId);
+          this.highlightProtocolGroup(evt.protocolGroupId);
         });
         card.addEventListener('mouseleave', () => {
           this.store.setHoveredProtocolGroup(null);
+          this.highlightProtocolGroup(null);
         });
       }
 
       dayColumn.appendChild(card);
+    });
+  }
+
+  /**
+   * Search + category filter shared by every view. Only events in a known, unchecked
+   * category are hidden (events whose category was deleted stay visible).
+   */
+  matchesFilters(evt) {
+    const q = this.store.searchQuery;
+    if (q) {
+      const haystack = [evt.title, evt.protocolName, evt.notes]
+        .filter((v) => typeof v === 'string')
+        .join('\n')
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    if (evt.category &&
+        !this.store.visibleCategories.has(evt.category) &&
+        this.store.categories.some((c) => c.name === evt.category)) {
+      return false;
+    }
+    return true;
+  }
+
+  highlightProtocolGroup(groupId) {
+    this.container.querySelectorAll('.cal-event-card[data-protocol-group-id]').forEach((card) => {
+      card.classList.toggle('linked-group-highlight', Boolean(groupId) && card.dataset.protocolGroupId === groupId);
     });
   }
 
@@ -399,15 +417,7 @@ export class CalendarRenderer {
     const allExpanded = this.store.getExpandedEventsForRange(allDateKeys);
 
     // Apply category & search query filters
-    const filteredEvents = allExpanded.filter((e) => {
-      if (this.store.visibleCategories.size > 0 && !this.store.visibleCategories.has(e.category)) {
-        return false;
-      }
-      if (this.store.searchQuery && !e.title.toLowerCase().includes(this.store.searchQuery)) {
-        return false;
-      }
-      return true;
-    });
+    const filteredEvents = allExpanded.filter((e) => this.matchesFilters(e));
 
     // Weeks container
     const weeksContainer = document.createElement('div');
@@ -565,8 +575,8 @@ export class CalendarRenderer {
 
       // Sort multi-day events: longer spans first, then start date
       multiDayEvents.sort((a, b) => {
-        const spanA = (a.endDateKey || a.dateKey).localeCompare(a.dateKey);
-        const spanB = (b.endDateKey || b.dateKey).localeCompare(b.dateKey);
+        const spanA = calculateDaysBetween(a.dateKey, a.endDateKey || a.dateKey);
+        const spanB = calculateDaysBetween(b.dateKey, b.endDateKey || b.dateKey);
         if (spanA !== spanB) return spanB - spanA;
         return a.dateKey.localeCompare(b.dateKey);
       });

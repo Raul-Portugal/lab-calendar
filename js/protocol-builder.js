@@ -52,10 +52,13 @@ export class ProtocolBuilder {
   }
 
   open(templateProtocol = null) {
-    this.editingProtocolId = templateProtocol ? templateProtocol.id : null;
+    // Custom protocols are edited in place; built-ins are copied into a new custom protocol
+    const isCustom = Boolean(templateProtocol) &&
+      this.store.customProtocols.some((p) => p.id === templateProtocol.id);
+    this.editingProtocolId = isCustom ? templateProtocol.id : null;
 
     if (templateProtocol) {
-      this.nameInput.value = `${templateProtocol.name} (Custom)`;
+      this.nameInput.value = isCustom ? templateProtocol.name : `${templateProtocol.name} (Custom)`;
       this.categoryInput.value = templateProtocol.category || 'Protocol';
       this.colorSelect.value = templateProtocol.color || 'ocean';
       this.descInput.value = templateProtocol.description || '';
@@ -352,13 +355,16 @@ export class ProtocolBuilder {
       totalDays: maxDayOffset + 1,
       version: 1,
       description: this.descInput.value || '',
-      steps: this.steps
+      steps: JSON.parse(JSON.stringify(this.steps))
     };
 
+    // Previously this deleted and re-added the protocol under the same id, which put the id
+    // in deletedProtocolIds and made the edited protocol disappear from the library.
     if (this.editingProtocolId) {
-      this.store.deleteCustomProtocol(this.editingProtocolId);
+      this.store.updateCustomProtocol(this.editingProtocolId, protocol);
+    } else {
+      this.store.addCustomProtocol(protocol);
     }
-    this.store.addCustomProtocol(protocol);
 
     this.close();
     if (this.onProtocolSaved) {

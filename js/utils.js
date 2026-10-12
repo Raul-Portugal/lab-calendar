@@ -270,20 +270,29 @@ export function safeColor(name, fallback = 'ocean') {
  * RFC 5545 Line Folding Helper (Folds at 75 octets with CRLF + space)
  */
 export function foldIcsLine(line) {
-  if (line.length <= 75) return line;
+  const encoder = new TextEncoder();
+  if (encoder.encode(line).length <= 75) return line;
 
+  // Count UTF-8 bytes, never splitting a multi-byte character (µ, °, emoji...)
   const parts = [];
-  let remaining = line;
+  let current = '';
+  let currentBytes = 0;
+  let limit = 75; // continuation lines: 1 space + 74 octets
 
-  parts.push(remaining.slice(0, 75));
-  remaining = remaining.slice(75);
-
-  while (remaining.length > 0) {
-    parts.push(' ' + remaining.slice(0, 74));
-    remaining = remaining.slice(74);
+  for (const char of line) {
+    const charBytes = encoder.encode(char).length;
+    if (currentBytes + charBytes > limit) {
+      parts.push(current);
+      current = '';
+      currentBytes = 0;
+      limit = 74;
+    }
+    current += char;
+    currentBytes += charBytes;
   }
+  parts.push(current);
 
-  return parts.join('\r\n');
+  return parts.map((part, i) => (i === 0 ? part : ' ' + part)).join('\r\n');
 }
 
 // Calculate whole days between two date keys (YYYY-MM-DD)

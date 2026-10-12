@@ -206,24 +206,9 @@ export class DragDropController {
         const isSeries = eventCard.dataset.isSeriesOccurrence === 'true';
 
         if (isSeries) {
-          const seriesId = eventCard.dataset.seriesId;
-          const occDate = eventCard.dataset.occurrenceDate;
-          const seriesObj = this.store.findSeries(seriesId);
-          if (seriesObj && this.onOpenEditModal) {
-            const seriesEvent = {
-              id: eventId,
-              seriesId: seriesObj.id,
-              isSeriesOccurrence: true,
-              occurrenceDate: occDate,
-              title: seriesObj.title,
-              dateKey: occDate,
-              startTime: seriesObj.startTime,
-              endTime: seriesObj.endTime,
-              category: seriesObj.category,
-              color: seriesObj.color,
-              notes: seriesObj.notes || ''
-            };
-            this.onOpenEditModal(seriesEvent);
+          const occurrence = this.getOccurrenceEvent(eventCard.dataset.seriesId, eventCard.dataset.occurrenceDate);
+          if (occurrence && this.onOpenEditModal) {
+            this.onOpenEditModal({ ...occurrence, notes: occurrence.notes || '' });
           }
         } else {
           const targetEvent = this.store.events.find((evt) => evt.id === eventId);
@@ -437,23 +422,10 @@ export class DragDropController {
     const seriesId = eventCard.dataset.seriesId;
     const occurrenceDate = eventCard.dataset.occurrenceDate;
 
-    // Find event data
-    let evt = this.store.events.find((e) => e.id === eventId);
-    if (!evt && isSeries) {
-      const seriesObj = this.store.series.find((s) => s.id === seriesId);
-      if (seriesObj) {
-        evt = {
-          id: eventId,
-          title: seriesObj.title,
-          dateKey: occurrenceDate,
-          startTime: seriesObj.startTime,
-          endTime: seriesObj.endTime,
-          isSeriesOccurrence: true,
-          seriesId: seriesId,
-          occurrenceDate: occurrenceDate
-        };
-      }
-    }
+    // Find event data (series occurrences include any per-occurrence override)
+    const evt = isSeries
+      ? this.getOccurrenceEvent(seriesId, occurrenceDate)
+      : this.store.events.find((e) => e.id === eventId);
     if (!evt) return;
 
     const startX = startEvent.clientX;
@@ -584,19 +556,9 @@ export class DragDropController {
     const seriesId = eventCard.dataset.seriesId;
     const occurrenceDate = eventCard.dataset.occurrenceDate;
 
-    let evt = this.store.events.find((e) => e.id === eventId);
-    if (!evt && isSeries) {
-      const seriesObj = this.store.series.find((s) => s.id === seriesId);
-      if (seriesObj) {
-        evt = {
-          id: eventId,
-          title: seriesObj.title,
-          dateKey: occurrenceDate,
-          startTime: seriesObj.startTime,
-          endTime: seriesObj.endTime
-        };
-      }
-    }
+    const evt = isSeries
+      ? this.getOccurrenceEvent(seriesId, occurrenceDate)
+      : this.store.events.find((e) => e.id === eventId);
     if (!evt) return;
 
     const dayCol = eventCard.closest('.cal-day-column');
@@ -649,11 +611,10 @@ export class DragDropController {
       if (evt.isChained && isCtrl && !isTop) {
         // Cascade resize end time downstream
         const deltaMinutes = curEndMin - origEndMin;
-        this.store.updateEvent(evt.id, {
+        this.store.resizeStepAndCascade(evt.id, {
           startTime: minutesToTime(curStartMin),
           endTime: minutesToTime(curEndMin)
-        });
-        this.store.cascadeShiftProtocolSteps(evt.protocolGroupId, evt.id, 0, deltaMinutes);
+        }, deltaMinutes);
         this.showToast(`Extended duration and cascaded downstream steps by ${deltaMinutes} min.`);
       } else {
         this.store.updateEvent(evt.id, {
@@ -684,13 +645,9 @@ export class DragDropController {
       const seriesId = eventCard.dataset.seriesId;
       const occurrenceDate = eventCard.dataset.occurrenceDate;
 
-      let evt = this.store.events.find((item) => item.id === eventId);
-      if (!evt && isSeries) {
-        const s = this.store.findSeries(seriesId);
-        if (s) {
-          evt = { ...s, id: eventId, isSeriesOccurrence: true, seriesId: s.id, occurrenceDate: occurrenceDate, dateKey: occurrenceDate };
-        }
-      }
+      const evt = isSeries
+        ? this.getOccurrenceEvent(seriesId, occurrenceDate)
+        : this.store.events.find((item) => item.id === eventId);
       if (!evt) return;
 
       this.activeContextEvent = evt;
@@ -775,6 +732,12 @@ export class DragDropController {
         }
       }
     });
+  }
+
+  // The rendered occurrence of a recurring series, including its exception override
+  getOccurrenceEvent(seriesId, occurrenceDate) {
+    const seriesObj = this.store.findSeries(seriesId);
+    return seriesObj ? this.store.buildSeriesOccurrence(seriesObj, occurrenceDate) : null;
   }
 
   /**

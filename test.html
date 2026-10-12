@@ -475,6 +475,84 @@
         window.fetch = realFetch;
       }
 
+      // 23. Categories: object-shaped add/update (used to throw TypeError)
+      store.categories = JSON.parse(JSON.stringify(store.categories));
+      assert(store.addCategory({ name: 'Imaging Core', color: 'cyan' }) === true && store.categories.some(c => c.name === 'Imaging Core' && c.color === 'cyan'), 'addCategory({ name, color }) adds the category');
+      assert(store.addCategory({ name: 'imaging core', color: 'ocean' }) === false, 'addCategory rejects case-insensitive duplicates');
+      store.events = [{ id: 'cat_evt', title: 'Confocal', category: 'Imaging Core', dateKey: '2026-10-15', startTime: '09:00', endTime: '10:00' }];
+      store.quotas = [{ id: 'cat_q', title: 'Imaging', weeklyTarget: 2, categories: ['Imaging Core'] }];
+      assert(store.updateCategory('Imaging Core', { name: 'Microscopy', color: 'amber' }) === true, 'updateCategory(oldName, { name, color }) succeeds');
+      assert(store.events[0].category === 'Microscopy' && store.quotas[0].categories[0] === 'Microscopy' && store.visibleCategories.has('Microscopy'), 'Category rename carries over to events, quotas and visibility');
+
+      // 24. Shared view filter
+      const { CalendarRenderer } = await import('./js/calendar.js');
+      const renderer = new CalendarRenderer(document.createElement('div'), store);
+      store.searchQuery = 'trizol';
+      assert(renderer.matchesFilters({ title: 'RNA prep', notes: 'Lyse in TRIzol' }) === true && renderer.matchesFilters({ title: 'RNA prep' }) === false, 'Search matches notes (in every view)');
+      store.searchQuery = '';
+      store.visibleCategories.delete('Microscopy');
+      assert(renderer.matchesFilters({ title: 'x', category: 'Microscopy' }) === false, 'Unchecked category is hidden');
+      assert(renderer.matchesFilters({ title: 'x', category: 'Deleted Category' }) === true, 'Events of a deleted category stay visible');
+      store.visibleCategories.add('Microscopy');
+
+      // 25. Protocols crossing midnight roll over instead of piling up at 23:59
+      const { placeAtAbsoluteMinute } = await import('./js/protocols.js');
+      const lateWb = instantiateProtocol(wbProto, '2026-10-15', 20 * 60);
+      const durationsKept = lateWb.events.every((e, i) => timeToMinutes(e.endTime) - timeToMinutes(e.startTime) === wbProto.steps[i].durationMinutes);
+      assert(durationsKept, 'Late protocol: every step keeps its full duration');
+      assert(lateWb.events[0].dateKey === '2026-10-15' && lateWb.events[2].dateKey === '2026-10-16', 'Late protocol: steps after midnight move to the next day');
+      assert(!lateWb.events.some(e => e.startTime === '23:59'), 'Late protocol: no steps collapsed at 23:59');
+      const lateShift = shiftProtocolGroup([{ id: 'l1', protocolGroupId: 'gl', dateKey: '2026-10-15', startTime: '22:30', endTime: '23:15' }], 'gl', 0, 90);
+      assert(lateShift[0].dateKey === '2026-10-16' && lateShift[0].startTime === '00:00' && lateShift[0].endTime === '00:45', 'Shifting past midnight moves the step to the next day');
+      const earlyShift = shiftProtocolGroup([{ id: 'e1', protocolGroupId: 'ge', dateKey: '2026-10-15', startTime: '00:30', endTime: '01:00' }], 'ge', 0, -60);
+      assert(earlyShift[0].dateKey === '2026-10-14' && earlyShift[0].startTime === '23:30', 'Shifting before midnight moves the step to the previous day');
+      assert(placeAtAbsoluteMinute('2026-10-15', 1430, 60).dateKey === '2026-10-16', 'placeAtAbsoluteMinute never lets an event cross midnight');
+
+      // 26. Ctrl+resize cascades only the steps AFTER the resized one
+      store.events = JSON.parse(JSON.stringify(instantiated.events));
+      const step3 = store.events[2];
+      const step3Start = step3.startTime;
+      const step4StartBefore = timeToMinutes(store.events[3].startTime);
+      store.resizeStepAndCascade(step3.id, { endTime: minutesToTime(timeToMinutes(step3.endTime) + 30) }, 30);
+      assert(store.events[2].startTime === step3Start, 'Resized step keeps its start time');
+      assert(timeToMinutes(store.events[3].startTime) === step4StartBefore + 30, 'Following step is pushed by the extra duration');
+
+      // 27. Recurring series fixes
+      store.series = [{ id: 's_wed', title: 'Lab Meeting', rule: { freq: 'WEEKLY', byDay: ['WE'] }, startTime: '09:30', endTime: '11:00', from: '2026-10-01', until: null, color: 'emerald', category: 'Meeting' }];
+      store.exceptions = [];
+      assert(store.findSeries('s_we') === null, 'findSeries does not match id prefixes');
+      store.modifySeriesOccurrence('s_wed', '2026-10-14', { dateKey: '2026-10-22', startTime: '14:00', endTime: '15:00' }, 'this');
+      const nextWeek = store.getExpandedEventsForRange(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']);
+      assert(nextWeek.some(e => e.dateKey === '2026-10-22' && e.startTime === '14:00'), 'Occurrence moved into another week is shown in that week');
+      const occ = store.buildSeriesOccurrence(store.series[0], '2026-10-14');
+      assert(occ.startTime === '14:00' && occ.isException === true, 'buildSeriesOccurrence returns the edited times of a modified occurrence');
+      store.modifySeriesOccurrence('s_wed', '2026-10-07', { dateKey: '2026-10-08', title: 'Lab Meeting', startTime: '09:30', endTime: '11:00' }, 'all');
+      assert(store.series[0].rule.byDay.join() === 'TH' && store.series[0].dateKey === undefined, 'Moving "all occurrences" by a day shifts the weekday rule');
+
+      // 28. Month navigation does not skip short months
+      store.currentView = 'month';
+      store.currentDate = new Date(2026, 0, 31);
+      store.navigate(1);
+      assert(store.currentDate.getMonth() === 1 && store.currentDate.getDate() === 28, 'Next month from Jan 31 is Feb 28 (not March 3)');
+      store.currentView = 'week';
+
+      // 29. ICS exceptions, floating UNTIL, byte-based folding
+      const { buildIcsContent } = await import('./js/storage.js');
+      const ics = buildIcsContent([], [{ id: 'sx', title: 'Seminar', rule: { freq: 'WEEKLY', byDay: ['FR'] }, startTime: '15:00', endTime: '16:00', from: '2026-10-01', until: '2026-12-31' }], [
+        { seriesId: 'sx', occurrenceDate: '2026-10-09', type: 'cancelled' },
+        { seriesId: 'sx', occurrenceDate: '2026-10-16', type: 'modified', override: { startTime: '16:00', endTime: '17:00' } }
+      ]);
+      assert(ics.includes('EXDATE:20261009T150000'), 'ICS: cancelled occurrence exported as EXDATE');
+      assert(ics.includes('RECURRENCE-ID:20261016T150000') && ics.includes('DTSTART:20261016T160000'), 'ICS: modified occurrence exported as RECURRENCE-ID override');
+      assert(ics.includes('UNTIL=20261231T235959\r\n') || ics.includes('UNTIL=20261231T235959'), 'ICS: UNTIL is floating like DTSTART');
+      assert(!ics.includes('T235959Z'), 'ICS: no UTC UNTIL with floating DTSTART');
+      assert(ics.includes('DTSTART:20261002T150000'), 'ICS: DTSTART is the first real occurrence (Fri Oct 2), not the range start');
+      const multiByte = 'DESCRIPTION:' + 'Add 5 µL at 4°C. '.repeat(10);
+      const foldedMb = foldIcsLine(multiByte).split('\r\n');
+      const enc = new TextEncoder();
+      assert(foldedMb.every(l => enc.encode(l).length <= 75), 'ICS folding limits lines to 75 octets with µ / ° characters');
+      assert(foldedMb.map((l, i) => i === 0 ? l : l.slice(1)).join('') === multiByte, 'ICS folding round-trips multi-byte text');
+
       summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
       summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
       window.__TESTS_PASSED__ = (failed === 0);

@@ -3,7 +3,7 @@
  * Implements Series + Exceptions data model and derived step indexing
  */
 
-import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey } from './utils.js';
+import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey, calculateDaysBetween } from './utils.js';
 import { loadStateFromStorage, saveStateToStorage, getStorageKey } from './storage.js';
 import { BUILT_IN_PROTOCOLS, shiftProtocolGroup as shiftProtoEvents, cascadeShiftProtocolSteps, checkProtocolChainIntegrity } from './protocols.js';
 
@@ -226,7 +226,10 @@ class StateStore {
       } else if (this.currentView === 'week') {
         d.setDate(d.getDate() + (direction * 7));
       } else if (this.currentView === 'month') {
-        d.setMonth(d.getMonth() + direction);
+        // Clamp the day so e.g. Jan 31 -> Feb 28 instead of overflowing into March
+        const target = new Date(d.getFullYear(), d.getMonth() + direction, 1);
+        const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+        d.setFullYear(target.getFullYear(), target.getMonth(), Math.min(d.getDate(), lastDay));
       }
       this.currentDate = d;
     }
@@ -254,11 +257,59 @@ class StateStore {
     this.notify('filter_change');
   }
 
+  // Hover highlighting is applied directly to the DOM by the renderer (no full re-render)
   setHoveredProtocolGroup(groupId) {
-    if (this.hoveredProtocolGroupId !== groupId) {
-      this.hoveredProtocolGroupId = groupId;
-      this.notify('hover_change');
+    this.hoveredProtocolGroupId = groupId;
+  }
+
+  seriesOccursOn(s, dateKey) {
+    const dayCode = DAY_CODE_MAP[parseDateKey(dateKey).getDay()];
+    if (!s.rule?.byDay?.includes(dayCode)) return false;
+    if (s.from && dateKey < s.from) return false;
+    if (s.until && dateKey > s.until) return false;
+    return true;
+  }
+
+  /**
+   * The rendered event for one occurrence of a series (with its exception applied),
+   * or null if the series does not occur on that date or the occurrence is cancelled.
+   */
+  buildSeriesOccurrence(s, occurrenceDate) {
+    if (!this.seriesOccursOn(s, occurrenceDate)) return null;
+
+    const exc = this.exceptions.find((e) => e.seriesId === s.id && e.occurrenceDate === occurrenceDate);
+    if (exc?.type === 'cancelled') return null;
+
+    const base = {
+      seriesId: s.id,
+      occurrenceDate,
+      isSeriesOccurrence: true,
+      title: s.title,
+      dateKey: occurrenceDate,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      color: s.color,
+      category: s.category,
+      notes: s.notes
+    };
+
+    if (exc?.type === 'modified' && exc.override) {
+      const o = exc.override;
+      return {
+        ...base,
+        id: `${s.id}_${occurrenceDate}_exc`,
+        isException: true,
+        title: o.title || s.title,
+        dateKey: o.dateKey || occurrenceDate,
+        startTime: o.startTime || s.startTime,
+        endTime: o.endTime || s.endTime,
+        color: o.color || s.color,
+        category: o.category || s.category,
+        notes: o.notes !== undefined ? o.notes : s.notes
+      };
     }
+
+    return { ...base, id: `${s.id}_${occurrenceDate}`, isException: false };
   }
 
   /**
@@ -271,59 +322,19 @@ class StateStore {
 
     // 1. Expand Recurring Series
     dateKeysList.forEach((dateKey) => {
-      const d = parseDateKey(dateKey);
-      const dayCode = DAY_CODE_MAP[d.getDay()];
-
       this.series.forEach((s) => {
-        // Check rule matches day of week
-        if (!s.rule?.byDay?.includes(dayCode)) return;
-
-        // Check date is within series range
-        if (dateKey < s.from) return;
-        if (s.until && dateKey > s.until) return;
-
-        // Check if an exception exists for this occurrence
-        const exc = this.exceptions.find((e) => e.seriesId === s.id && e.occurrenceDate === dateKey);
-        if (exc) {
-          if (exc.type === 'cancelled') {
-            // Cancelled occurrence: skip
-            return;
-          } else if (exc.type === 'modified' && exc.override) {
-            // Modified occurrence
-            resultEvents.push({
-              id: `${s.id}_${dateKey}_exc`,
-              seriesId: s.id,
-              occurrenceDate: dateKey,
-              isSeriesOccurrence: true,
-              isException: true,
-              title: exc.override.title || s.title,
-              dateKey: exc.override.dateKey || dateKey,
-              startTime: exc.override.startTime || s.startTime,
-              endTime: exc.override.endTime || s.endTime,
-              color: exc.override.color || s.color,
-              category: s.category,
-              notes: exc.override.notes !== undefined ? exc.override.notes : s.notes
-            });
-            return;
-          }
-        }
-
-        // Normal unmodified occurrence
-        resultEvents.push({
-          id: `${s.id}_${dateKey}`,
-          seriesId: s.id,
-          occurrenceDate: dateKey,
-          isSeriesOccurrence: true,
-          isException: false,
-          title: s.title,
-          dateKey: dateKey,
-          startTime: s.startTime,
-          endTime: s.endTime,
-          color: s.color,
-          category: s.category,
-          notes: s.notes
-        });
+        const occurrence = this.buildSeriesOccurrence(s, dateKey);
+        if (occurrence) resultEvents.push(occurrence);
       });
+    });
+
+    // 1b. Occurrences moved INTO this range from a date outside it ("this occurrence" moves)
+    this.exceptions.forEach((exc) => {
+      const movedTo = exc.type === 'modified' && exc.override?.dateKey;
+      if (!movedTo || !dateKeySet.has(movedTo) || dateKeySet.has(exc.occurrenceDate)) return;
+      const s = this.series.find((item) => item.id === exc.seriesId);
+      const occurrence = s && this.buildSeriesOccurrence(s, exc.occurrenceDate);
+      if (occurrence) resultEvents.push(occurrence);
     });
 
     // 2. Add regular scheduled events within the range (including multi-day spans)
@@ -501,12 +512,40 @@ class StateStore {
     this.notify('protocol_group_cascaded');
   }
 
-  // Robust Series Finder
+  // Resize a protocol step and push only the steps after it by the change in end time (Ctrl + resize)
+  resizeStepAndCascade(stepId, updates, deltaMinutes) {
+    const idx = this.events.findIndex((e) => e.id === stepId);
+    if (idx === -1) return;
+    const step = this.events[idx];
+    this.pushHistorySnapshot(`Resize "${step.title}" and cascade`);
+    this.events[idx] = { ...step, ...updates };
+    if (step.protocolGroupId && deltaMinutes) {
+      this.events = cascadeShiftProtocolSteps(this.events, step.protocolGroupId, stepId, 0, deltaMinutes, false);
+    }
+    this.notify('protocol_group_cascaded');
+  }
+
+  // Series Finder (exact id only: a prefix match could pick the wrong series)
   findSeries(seriesId) {
     if (!seriesId) return null;
-    return this.series.find((s) => s.id === seriesId) ||
-           this.series.find((s) => seriesId.startsWith(s.id)) ||
-           null;
+    return this.series.find((s) => s.id === seriesId) || null;
+  }
+
+  /**
+   * Turn occurrence-level edits into series-level fields. A move to another day becomes a
+   * weekday shift of the recurrence rule; all-day fields are not supported on series.
+   */
+  toSeriesUpdates(seriesItem, occurrenceDate, updates) {
+    const { dateKey, endDateKey, isAllDay, ...rest } = updates;
+    const dayShift = dateKey ? calculateDaysBetween(occurrenceDate, dateKey) : 0;
+    if (dayShift !== 0 && seriesItem.rule?.byDay) {
+      const shifted = seriesItem.rule.byDay.map((code) => {
+        const idx = DAY_CODE_MAP.indexOf(code);
+        return idx === -1 ? code : DAY_CODE_MAP[(((idx + dayShift) % 7) + 7) % 7];
+      });
+      rest.rule = { ...seriesItem.rule, byDay: [...new Set(shifted)] };
+    }
+    return { updates: rest, dayShift };
   }
 
   // Series Mutations (Series + Exceptions)
@@ -535,21 +574,28 @@ class StateStore {
       }
     } else if (mode === 'all') {
       // Modify all events in series
-      Object.assign(seriesItem, updates);
+      const { updates: seriesUpdates } = this.toSeriesUpdates(seriesItem, occurrenceDate, updates);
+      Object.assign(seriesItem, seriesUpdates);
     } else if (mode === 'following') {
-      // Modify this and following events
-      const prevDate = shiftDateKey(occurrenceDate, -1);
-      seriesItem.until = prevDate;
+      // Modify this and following events: end the old series, start a new one
+      const { updates: seriesUpdates, dayShift } = this.toSeriesUpdates(seriesItem, occurrenceDate, updates);
+      const originalUntil = seriesItem.until;
+      seriesItem.until = shiftDateKey(occurrenceDate, -1);
 
-      // Create new series starting from occurrenceDate
+      const newFrom = dayShift < 0 ? shiftDateKey(occurrenceDate, dayShift) : occurrenceDate;
       const newSeries = {
         ...JSON.parse(JSON.stringify(seriesItem)),
         id: generateId('series'),
-        from: occurrenceDate,
-        until: null,
-        ...updates
+        from: newFrom,
+        until: originalUntil || null,
+        ...seriesUpdates
       };
       this.series.push(newSeries);
+
+      // Exceptions after the split belong to occurrences that no longer exist in the old series
+      this.exceptions = this.exceptions.filter(
+        (e) => !(e.seriesId === actualSeriesId && e.occurrenceDate >= occurrenceDate)
+      );
     }
 
     this.notify('series_updated');
@@ -678,36 +724,57 @@ class StateStore {
   }
 
   // Filter Calendars / Categories
-  addCategory(name, color = 'ocean') {
+  hasCategoryNamed(name, exceptName = null) {
+    const lower = name.toLowerCase();
+    return this.categories.some((c) => c.name !== exceptName && c.name.toLowerCase() === lower);
+  }
+
+  /**
+   * Add a category { name, color }. Returns false if the name is empty or already used.
+   */
+  addCategory({ name, color = 'ocean' } = {}) {
     const trimmed = (name || '').trim();
-    if (!trimmed || this.categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) return;
+    if (!trimmed || this.hasCategoryNamed(trimmed)) return false;
     this.pushHistorySnapshot(`Add category "${trimmed}"`);
     this.categories.push({ id: generateId('cat'), name: trimmed, color: color });
     this.visibleCategories.add(trimmed);
     this.notify('category_added');
+    return true;
   }
 
-  updateCategory(oldName, newName, newColor) {
+  /**
+   * Rename / recolor a category and carry the rename over to everything that references it.
+   * Returns false if the new name collides with another category.
+   */
+  updateCategory(oldName, { name, color } = {}) {
     const cat = this.categories.find((c) => c.name === oldName);
-    if (!cat) return;
+    if (!cat) return false;
+    const trimmed = (name || '').trim() || oldName;
+    if (this.hasCategoryNamed(trimmed, oldName)) return false;
+
     this.pushHistorySnapshot(`Update category "${oldName}"`);
-    const trimmed = (newName || '').trim() || oldName;
     cat.name = trimmed;
-    if (newColor) cat.color = newColor;
+    if (color) cat.color = color;
 
     if (this.visibleCategories.has(oldName)) {
       this.visibleCategories.delete(oldName);
       this.visibleCategories.add(trimmed);
     }
 
-    this.events.forEach((e) => {
-      if (e.category === oldName) e.category = trimmed;
-    });
-    this.quickClasses.forEach((qc) => {
-      if (qc.category === oldName) qc.category = trimmed;
+    const rename = (item) => {
+      if (item.category === oldName) item.category = trimmed;
+    };
+    this.events.forEach(rename);
+    this.series.forEach(rename);
+    this.quickClasses.forEach(rename);
+    this.quotas.forEach((q) => {
+      if (Array.isArray(q.categories)) {
+        q.categories = q.categories.map((c) => (c === oldName ? trimmed : c));
+      }
     });
 
     this.notify('category_updated');
+    return true;
   }
 
   deleteCategory(name) {

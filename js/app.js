@@ -213,7 +213,7 @@ class LabCalendarApp {
 
     // Direct 1-Click GCal export button
     this.directGcalBtn?.addEventListener('click', () => {
-      exportToIcs(store.events, store.series);
+      exportToIcs(store.events, store.series, store.exceptions);
       this.showToast('Downloaded lab_calendar.ics! In Google Calendar: Settings -> Import & export -> Import this file.');
     });
 
@@ -225,7 +225,7 @@ class LabCalendarApp {
 
     this.exportIcsBtn?.addEventListener('click', () => {
       this.exportDropdown.classList.add('hidden');
-      exportToIcs(store.events, store.series);
+      exportToIcs(store.events, store.series, store.exceptions);
       this.showToast('Exported RFC 5545 iCalendar (.ics) with recurring rules.');
     });
 
@@ -309,6 +309,10 @@ class LabCalendarApp {
   }
 
   onStateChanged(changeType) {
+    if (changeType === 'date_change') {
+      // Keep the mini calendar on the month being viewed
+      this.miniDate = new Date(store.currentDate);
+    }
     this.renderHeaderTitle();
     this.calendar.render();
     this.renderSidebarQuotas();
@@ -666,8 +670,11 @@ class LabCalendarApp {
     const startDayIndex = (firstDayOfMonth.getDay() + 6) % 7;
     const startDate = new Date(year, month, 1 - startDayIndex);
     const today = new Date();
+    // 5 or 6 week rows, same as the month view (a fixed 35 cells cut off e.g. March 2026)
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const totalCells = (startDayIndex + daysInMonth > 35) ? 42 : 35;
 
-    for (let i = 0; i < 35; i++) {
+    for (let i = 0; i < totalCells; i++) {
       const cellDate = new Date(startDate);
       cellDate.setDate(startDate.getDate() + i);
 
@@ -688,12 +695,13 @@ class LabCalendarApp {
 
     this.miniCalendarWidget.appendChild(grid);
 
+    // Day 1 avoids month overflow (e.g. Jan 31 + 1 month would land in March)
     header.querySelector('#miniPrevBtn').addEventListener('click', () => {
-      this.miniDate.setMonth(this.miniDate.getMonth() - 1);
+      this.miniDate = new Date(year, month - 1, 1);
       this.renderMiniCalendar();
     });
     header.querySelector('#miniNextBtn').addEventListener('click', () => {
-      this.miniDate.setMonth(this.miniDate.getMonth() + 1);
+      this.miniDate = new Date(year, month + 1, 1);
       this.renderMiniCalendar();
     });
   }
@@ -1232,13 +1240,14 @@ class LabCalendarApp {
       const color = this.categoryColorSelect.value || 'ocean';
       const oldName = this.categoryEditOldNameInput.value;
 
-      if (oldName) {
-        store.updateCategory(oldName, { name, color });
-        this.showToast(`Updated category "${name}"`);
-      } else {
-        store.addCategory({ name, color });
-        this.showToast(`Added category "${name}"`);
+      const saved = oldName
+        ? store.updateCategory(oldName, { name, color })
+        : store.addCategory({ name, color });
+      if (!saved) {
+        alert(`A category named "${name}" already exists.`);
+        return;
       }
+      this.showToast(oldName ? `Updated category "${name}"` : `Added category "${name}"`);
 
       this.closeCategoryModal();
     });

@@ -3,7 +3,7 @@
  * Implements schemaVersion: 2, migration pipeline, multi-tab sync, and protocol JSON sharing
  */
 
-import { generateId, formatDateKey, getWeekDates, foldIcsLine, shiftDateKey } from './utils.js';
+import { generateId, formatDateKey, getWeekDates, foldIcsLine, shiftDateKey, parseDateKey } from './utils.js';
 import { BUILT_IN_PROTOCOLS } from './protocols.js';
 import { DEFAULT_QUOTAS } from './quotas.js';
 
@@ -180,40 +180,65 @@ export function saveStateToStorage(data) {
  * Export complete backup to JSON
  */
 export function exportStateToJson(data) {
-  const jsonStr = JSON.stringify(data, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `lab_calendar_backup_${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadTextFile(
+    JSON.stringify(data, null, 2),
+    `lab_calendar_backup_${new Date().toISOString().slice(0, 10)}.json`,
+    'application/json'
+  );
 }
 
 /**
  * Export single protocol template to shareable .protocol.json
  */
 export function exportSingleProtocol(protocol) {
-  const jsonStr = JSON.stringify(protocol, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
   const safeName = protocol.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-  a.download = `${safeName}.protocol.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadTextFile(JSON.stringify(protocol, null, 2), `${safeName}.protocol.json`, 'application/json');
 }
 
 /**
  * Strict RFC 5545 iCalendar (.ics) Exporter
  * Implements CRLF line endings, 75-octet folding, character escaping, stable UIDs, DTSTAMP, and RRULE
  */
-export function exportToIcs(events, seriesList = []) {
+export function exportToIcs(events, seriesList = [], exceptions = []) {
+  downloadTextFile(
+    buildIcsContent(events, seriesList, exceptions),
+    `lab_calendar_${new Date().toISOString().slice(0, 10)}.ics`,
+    'text/calendar;charset=utf-8'
+  );
+}
+
+function downloadTextFile(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const ICS_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+const icsDate = (dateKey) => dateKey.replace(/-/g, '');
+const icsTime = (time) => time.replace(':', '') + '00';
+
+// First date >= fromKey on one of the rule's weekdays (RFC 5545: DTSTART is the first instance)
+function firstOccurrenceOnOrAfter(fromKey, byDay) {
+  for (let i = 0; i < 7; i++) {
+    const key = shiftDateKey(fromKey, i);
+    if (byDay.includes(ICS_DAY_CODES[parseDateKey(key).getDay()])) return key;
+  }
+  return fromKey;
+}
+
+/**
+ * Build RFC 5545 iCalendar text. Times are floating (local wall-clock), so UNTIL,
+ * EXDATE and RECURRENCE-ID are floating too. Cancelled occurrences become EXDATEs and
+ * modified occurrences become RECURRENCE-ID overrides of the series.
+ */
+export function buildIcsContent(events, seriesList = [], exceptions = []) {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -227,28 +252,52 @@ export function exportToIcs(events, seriesList = []) {
   // 1. Export Recurring Series with RRULE
   (seriesList || []).forEach((s) => {
     const uid = `series-${s.id}@labcalendar.app`;
-    const fromCompact = s.from.replace(/-/g, '');
-    const startCompact = s.startTime.replace(':', '') + '00';
-    const endCompact = s.endTime.replace(':', '') + '00';
+    const byDayList = s.rule?.byDay?.length ? s.rule.byDay : ['WE'];
+    const firstKey = firstOccurrenceOnOrAfter(s.from, byDayList);
+    const startCompact = icsTime(s.startTime);
+    const endCompact = icsTime(s.endTime);
 
-    const byDays = (s.rule?.byDay || ['WE']).join(',');
-    let rrule = `RRULE:FREQ=${s.rule?.freq || 'WEEKLY'};BYDAY=${byDays}`;
+    let rrule = `RRULE:FREQ=${s.rule?.freq || 'WEEKLY'};BYDAY=${byDayList.join(',')}`;
     if (s.until) {
-      rrule += `;UNTIL=${s.until.replace(/-/g, '')}T235959Z`;
+      rrule += `;UNTIL=${icsDate(s.until)}T235959`;
     }
+
+    const seriesExceptions = (exceptions || []).filter((e) => e.seriesId === s.id);
 
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uid}`);
     lines.push(`DTSTAMP:${nowCompact}`);
-    lines.push(`DTSTART:${fromCompact}T${startCompact}`);
-    lines.push(`DTEND:${fromCompact}T${endCompact}`);
+    lines.push(`DTSTART:${icsDate(firstKey)}T${startCompact}`);
+    lines.push(`DTEND:${icsDate(firstKey)}T${endCompact}`);
     lines.push(rrule);
+    // Cancelled occurrences are excluded here; modified ones are overridden below via RECURRENCE-ID
+    seriesExceptions.filter((e) => e.type === 'cancelled').forEach((e) => {
+      lines.push(`EXDATE:${icsDate(e.occurrenceDate)}T${startCompact}`);
+    });
     lines.push(`SUMMARY:${escapeIcsText(s.title)}`);
     if (s.notes) {
       lines.push(`DESCRIPTION:${escapeIcsText(s.notes)}`);
     }
     lines.push(`CATEGORIES:${escapeIcsText(s.category || 'Meeting')}`);
     lines.push('END:VEVENT');
+
+    seriesExceptions.filter((e) => e.type === 'modified' && e.override).forEach((e) => {
+      const o = e.override;
+      const dateKey = o.dateKey || e.occurrenceDate;
+      const notes = o.notes !== undefined ? o.notes : s.notes;
+      lines.push('BEGIN:VEVENT');
+      lines.push(`UID:${uid}`);
+      lines.push(`DTSTAMP:${nowCompact}`);
+      lines.push(`RECURRENCE-ID:${icsDate(e.occurrenceDate)}T${startCompact}`);
+      lines.push(`DTSTART:${icsDate(dateKey)}T${icsTime(o.startTime || s.startTime)}`);
+      lines.push(`DTEND:${icsDate(dateKey)}T${icsTime(o.endTime || s.endTime)}`);
+      lines.push(`SUMMARY:${escapeIcsText(o.title || s.title)}`);
+      if (notes) {
+        lines.push(`DESCRIPTION:${escapeIcsText(notes)}`);
+      }
+      lines.push(`CATEGORIES:${escapeIcsText(o.category || s.category || 'Meeting')}`);
+      lines.push('END:VEVENT');
+    });
   });
 
   // 2. Export Standalone and Instantiated Protocol Events
@@ -257,26 +306,18 @@ export function exportToIcs(events, seriesList = []) {
     if (evt.isSeriesOccurrence && !evt.isException) return;
 
     const uid = `event-${evt.id}@labcalendar.app`;
-    const dateCompact = evt.dateKey.replace(/-/g, '');
-    const startCompact = evt.startTime.replace(':', '') + '00';
-    const endCompact = evt.endTime.replace(':', '') + '00';
 
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uid}`);
     lines.push(`DTSTAMP:${nowCompact}`);
     if (evt.isAllDay) {
-      const startCompact = evt.dateKey.replace(/-/g, '');
+      // DTEND is exclusive for all-day events
       const endKey = evt.endDateKey || evt.dateKey;
-      const nextDayKey = shiftDateKey(endKey, 1);
-      const endCompact = nextDayKey.replace(/-/g, '');
-      lines.push(`DTSTART;VALUE=DATE:${startCompact}`);
-      lines.push(`DTEND;VALUE=DATE:${endCompact}`);
+      lines.push(`DTSTART;VALUE=DATE:${icsDate(evt.dateKey)}`);
+      lines.push(`DTEND;VALUE=DATE:${icsDate(shiftDateKey(endKey, 1))}`);
     } else {
-      const dateCompact = evt.dateKey.replace(/-/g, '');
-      const startCompact = evt.startTime.replace(':', '') + '00';
-      const endCompact = evt.endTime.replace(':', '') + '00';
-      lines.push(`DTSTART:${dateCompact}T${startCompact}`);
-      lines.push(`DTEND:${dateCompact}T${endCompact}`);
+      lines.push(`DTSTART:${icsDate(evt.dateKey)}T${icsTime(evt.startTime)}`);
+      lines.push(`DTEND:${icsDate(evt.dateKey)}T${icsTime(evt.endTime)}`);
     }
     lines.push(`SUMMARY:${escapeIcsText(evt.title)}`);
     if (evt.notes) {
@@ -290,18 +331,7 @@ export function exportToIcs(events, seriesList = []) {
   lines.push('END:VCALENDAR');
 
   // Format with CRLF (\r\n) and 75-octet line folding
-  const foldedLines = lines.map(foldIcsLine);
-  const icsContent = foldedLines.join('\r\n') + '\r\n';
-
-  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `lab_calendar_${new Date().toISOString().slice(0, 10)}.ics`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  return lines.map(foldIcsLine).join('\r\n') + '\r\n';
 }
 
 function escapeIcsText(text) {
