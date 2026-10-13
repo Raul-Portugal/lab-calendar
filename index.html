@@ -330,7 +330,13 @@
 
         <!-- Live Visual Timeline Preview -->
         <div class="proto-timeline-preview-container">
-          <div class="timeline-preview-heading">Sequential Execution Timeline Preview</div>
+          <div class="timeline-preview-header">
+            <div class="timeline-preview-heading">Timeline Preview</div>
+            <label class="timeline-preview-start">
+              If started at
+              <input type="time" class="input-sm" id="protoBuildPreviewStart" value="09:00" step="900">
+            </label>
+          </div>
           <div id="protoBuildTimelinePreview"></div>
         </div>
 
@@ -340,7 +346,8 @@
             <label style="font-size: 12px; font-weight:700;">Protocol Steps & Gaps</label>
             <button type="button" class="btn btn-secondary btn-sm" id="protoBuildAddStepBtn">+ Add Step</button>
           </div>
-          <div id="protoBuildStepsList" style="display:flex; flex-direction:column; gap:10px;"></div>
+          <div id="protoBuildStepsList" class="proto-steps-list"></div>
+          <button type="button" class="btn btn-outline proto-add-step-bottom" id="protoBuildAddStepBottomBtn">+ Add Step</button>
         </div>
       </div>
       <div class="modal-footer">
