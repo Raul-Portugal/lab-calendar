@@ -46,6 +46,73 @@ export function timeToMinutes(timeStr) {
   return (h || 0) * 60 + (m || 0);
 }
 
+/**
+ * Absolute time: minutes since 1970-01-01 00:00 of the local wall clock.
+ * Calendar-day arithmetic (no Date offsets), so DST changes never shift events.
+ */
+export const MINUTES_PER_DAY = 1440;
+
+export function dayNumber(dateKey) {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  return Math.round(Date.UTC(y, m - 1, d) / 86400000);
+}
+
+export function dateKeyFromDayNumber(n) {
+  const d = new Date(n * 86400000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function toAbsMinutes(dateKey, time) {
+  return dayNumber(dateKey) * MINUTES_PER_DAY + timeToMinutes(time);
+}
+
+export function fromAbsMinutes(abs) {
+  const day = Math.floor(abs / MINUTES_PER_DAY);
+  const min = abs - day * MINUTES_PER_DAY;
+  return {
+    dateKey: dateKeyFromDayNumber(day),
+    time: `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
+  };
+}
+
+/**
+ * All-day events use isAllDay. Data saved before timed events could span days marked
+ * any multi-day event as all-day, so an untagged 00:00-23:59 multi-day event is all-day too.
+ */
+export function isAllDayEvent(evt) {
+  if (evt.isAllDay === true) return true;
+  if (evt.isAllDay === false) return false;
+  return Boolean(evt.endDateKey && evt.endDateKey !== evt.dateKey &&
+    (!evt.startTime || evt.startTime === '00:00') && (!evt.endTime || evt.endTime === '23:59'));
+}
+
+// Start / end of a timed event in absolute minutes (end may be on a later day)
+export function getEventSpan(evt) {
+  const startAbs = toAbsMinutes(evt.dateKey, evt.startTime);
+  const endAbs = toAbsMinutes(evt.endDateKey || evt.dateKey, evt.endTime);
+  return { startAbs, endAbs: Math.max(startAbs, endAbs) };
+}
+
+// Date / time fields for a timed event spanning [startAbs, endAbs)
+export function spanToFields(startAbs, endAbs) {
+  const start = fromAbsMinutes(startAbs);
+  const end = fromAbsMinutes(endAbs);
+  return { dateKey: start.dateKey, startTime: start.time, endDateKey: end.dateKey, endTime: end.time };
+}
+
+// Dates an event appears on: all-day uses its date range; a timed event ending exactly
+// at midnight does not appear on the following day.
+export function getEventDayRange(evt) {
+  if (isAllDayEvent(evt)) {
+    return { firstKey: evt.dateKey, lastKey: evt.endDateKey || evt.dateKey };
+  }
+  const { startAbs, endAbs } = getEventSpan(evt);
+  return {
+    firstKey: evt.dateKey,
+    lastKey: fromAbsMinutes(Math.max(startAbs, endAbs - 1)).dateKey
+  };
+}
+
 // Format 12-hour or 24-hour display string
 export function formatTimeDisplay(timeStr, use24Hour = false) {
   if (!timeStr) return '';
@@ -145,10 +212,11 @@ export function computeEventLayout(events) {
   const actives = [];
 
   events.forEach((evt) => {
+    // Callers may pass per-day segments with precomputed startMin / endMin (0..1440)
     const item = {
       ...evt,
-      startMin: timeToMinutes(evt.startTime),
-      endMin: timeToMinutes(evt.endTime),
+      startMin: evt.startMin ?? timeToMinutes(evt.startTime),
+      endMin: evt.endMin ?? timeToMinutes(evt.endTime),
       isPassive: evt.stepType === 'passive'
     };
     if (item.isPassive) {

@@ -226,6 +226,136 @@
   gap: 8px;
 }
 
+.proto-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.step-card-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Grip used to drag a step to a new position (touch-action: none so touch drags don't scroll) */
+.step-drag-handle {
+  border: none;
+  background: transparent;
+  color: var(--google-grey-500);
+  font-size: 14px;
+  letter-spacing: -2px;
+  line-height: 1;
+  padding: 4px 4px;
+  cursor: grab;
+  touch-action: none;
+  border-radius: var(--radius-sm);
+}
+.step-drag-handle:hover {
+  background-color: var(--google-grey-200);
+  color: var(--google-grey-800);
+}
+
+/* Collapsed steps show a one-line summary instead of the form */
+.step-card-summary {
+  display: none;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--google-grey-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.step-card-summary span {
+  margin-left: 6px;
+  color: var(--google-grey-700);
+}
+.proto-step-editor-card.is-collapsed .step-card-summary {
+  display: block;
+}
+.proto-step-editor-card.is-collapsed .step-form-grid {
+  display: none;
+}
+
+.duration-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--google-grey-700);
+}
+.duration-input .input-sm {
+  width: 56px;
+  min-width: 0;
+}
+
+/* "+" between steps */
+.step-insert-btn {
+  align-self: center;
+  width: 26px;
+  height: 18px;
+  border: 1px dashed var(--google-grey-300);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--google-grey-700);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+.step-insert-btn:hover,
+.step-insert-btn:focus-visible {
+  opacity: 1;
+  border-color: var(--google-blue);
+  color: var(--google-blue);
+}
+
+.proto-add-step-bottom {
+  align-self: stretch;
+  justify-content: center;
+  border-style: dashed;
+}
+
+/* While reordering: dragged card floats, a placeholder marks the drop position */
+.proto-step-editor-card.is-dragging {
+  box-shadow: var(--shadow-lg);
+  opacity: 0.95;
+  cursor: grabbing;
+  pointer-events: none;
+}
+.step-drop-placeholder {
+  border: 2px dashed var(--google-blue);
+  border-radius: var(--radius-md);
+  background-color: var(--google-blue-light);
+}
+.proto-steps-list.is-reordering .step-insert-btn {
+  visibility: hidden;
+}
+
+.timeline-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timeline-preview-start {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--google-grey-700);
+}
+
+@media (max-width: 768px) {
+  .step-form-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 /* Timeline Live Preview in Builder */
 .proto-timeline-preview-container {
   background-color: #f8f9fa;

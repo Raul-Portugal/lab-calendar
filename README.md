@@ -94,12 +94,17 @@ To access LabCal from anywhere on HTTPS:
 | **Undo** | <kbd>Ctrl</kbd> + <kbd>Z</kbd> |
 | **Redo** | <kbd>Ctrl</kbd> + <kbd>Y</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> |
 | **Search** | Top search bar filters by title, protocol name, or bench notes |
+| **Overnight event** | Drag from a time slot into the next day's column, or set an end date in the event dialog |
+| **Reorder protocol steps** | In the Protocol Builder, drag a step by its ⋮⋮ handle (or use ▲ / ▼) |
+
+Events and protocol steps can run past midnight: e.g. a 20 h incubation started at 19:00 ends at 15:00 the next day, and is drawn on both days.
 
 ### Phones & tablets (touch)
 
 | Action | Gesture |
 | :--- | :--- |
-| **Scroll** | Swipe as usual |
+| **Scroll** | Swipe up / down as usual |
+| **Previous / next days** | Swipe left / right (phones open in the 3-day view; Day, Week and Month are in the header) |
 | **Create event** | Long-press an empty time slot, drag to set the duration, release |
 | **Move event** | Long-press the event, then drag it |
 | **Event menu** (split, duplicate, protocol shift/cascade, delete) | Long-press the event and release without moving |

@@ -12,6 +12,12 @@
   -webkit-touch-callout: none;
 }
 
+/* Vertical scrolling stays native; horizontal swipes are ours (previous / next period) */
+.cal-scroll-body,
+.cal-month-view {
+  touch-action: pan-y;
+}
+
 /* Sidebar item armed for tap-to-place (touch fallback for drag & drop) */
 .is-armed-source {
   outline: 2px solid var(--google-blue);
@@ -85,7 +91,13 @@
   }
 
   .view-btn {
-    padding: 6px 8px;
+    padding: 6px 7px;
+    font-size: 12px;
+  }
+
+  /* Keeps the controls on one row; redo stays available as Ctrl+Y / Ctrl+Shift+Z */
+  #redoBtn {
+    display: none;
   }
 
   .btn {

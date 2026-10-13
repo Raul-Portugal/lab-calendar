@@ -3,7 +3,18 @@
  * Guarantees unified protocol color inheritance and explicit anchor modeling
  */
 
-import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey, safeColor } from './utils.js';
+import {
+  generateId,
+  timeToMinutes,
+  safeColor,
+  MINUTES_PER_DAY,
+  toAbsMinutes,
+  getEventSpan,
+  spanToFields
+} from './utils.js';
+
+// Longest step / gap accepted from protocol files (multi-day incubations)
+export const MAX_STEP_MINUTES = 14 * MINUTES_PER_DAY;
 
 const STEP_TYPES = ['active', 'passive', 'run'];
 const ANCHOR_TYPES = ['after-previous', 'day-anchored'];
@@ -36,9 +47,9 @@ export function sanitizeProtocol(raw) {
       return {
         id: generateId('step'),
         title: cleanText(s.title, 200) || 'Untitled Step',
-        durationMinutes: cleanInt(s.durationMinutes, 5, 1440, 30),
+        durationMinutes: cleanInt(s.durationMinutes, 5, MAX_STEP_MINUTES, 30),
         anchorType,
-        gapMinutes: cleanInt(s.gapMinutes, 0, 1440, 0),
+        gapMinutes: cleanInt(s.gapMinutes, 0, MAX_STEP_MINUTES, 0),
         dayOffset: cleanInt(s.dayOffset, 0, 30, 0),
         anchorTime,
         stepType: STEP_TYPES.includes(s.stepType) ? s.stepType : 'active',
@@ -303,63 +314,34 @@ export const BUILT_IN_PROTOCOLS = [
 ];
 
 /**
- * Instantiate a protocol from a template snapshot
- * All steps inherit the protocol's chosen theme color for visual consistency
+ * Instantiate a protocol from a template snapshot.
+ * Steps are placed at their real times: a step can run past midnight (e.g. an 18:00
+ * step followed by a 20 h incubation ends at 15:00 the next day).
+ * All steps inherit the protocol's chosen theme color for visual consistency.
  */
-const MINUTES_PER_DAY = 1440;
-
-/**
- * Place an event at an absolute minute offset from baseDateKey 00:00 (may be negative or
- * beyond one day). Events never cross midnight. One that would is either moved to start at
- * the next midnight (rollForward, used when chaining steps so they never overlap their
- * predecessor) or to whichever side of midnight is closest to the requested time.
- * Returns the date/time fields plus the absolute start actually used.
- */
-export function placeAtAbsoluteMinute(baseDateKey, absStartMin, durationMinutes, rollForward = false) {
-  let dayOffset = Math.floor(absStartMin / MINUTES_PER_DAY);
-  let start = absStartMin - dayOffset * MINUTES_PER_DAY;
-  if (start + durationMinutes > MINUTES_PER_DAY && start > 0) {
-    const fitBefore = Math.max(0, MINUTES_PER_DAY - durationMinutes);
-    if (rollForward || (MINUTES_PER_DAY - start) <= (start - fitBefore)) {
-      dayOffset += 1;
-      start = 0;
-    } else {
-      start = fitBefore;
-    }
-  }
-  const end = Math.min(MINUTES_PER_DAY, start + durationMinutes);
-  return {
-    dateKey: shiftDateKey(baseDateKey, dayOffset),
-    startTime: minutesToTime(start),
-    endTime: minutesToTime(end),
-    absStart: dayOffset * MINUTES_PER_DAY + start
-  };
-}
-
 export function instantiateProtocol(protocol, targetDateKey, targetStartMinutes) {
   const protocolGroupId = generateId(`grp_${protocol.id}`);
   const events = [];
   const protocolColor = protocol.color || 'ocean';
 
-  // Minutes since targetDateKey 00:00, so long chains roll over into the next day(s)
-  let currentAbs = targetStartMinutes;
+  const dayStartAbs = toAbsMinutes(targetDateKey, '00:00');
+  let currentAbs = dayStartAbs + targetStartMinutes;
 
   protocol.steps.forEach((step, index) => {
     if (step.anchorType === 'day-anchored') {
-      currentAbs = (step.dayOffset || 0) * MINUTES_PER_DAY + timeToMinutes(step.anchorTime || '09:00');
+      currentAbs = dayStartAbs + (step.dayOffset || 0) * MINUTES_PER_DAY + timeToMinutes(step.anchorTime || '09:00');
     } else if (index > 0) {
       currentAbs += (step.gapMinutes || 0);
     }
 
-    const placed = placeAtAbsoluteMinute(targetDateKey, currentAbs, step.durationMinutes, true);
-    currentAbs = placed.absStart + step.durationMinutes;
+    const startAbs = currentAbs;
+    currentAbs += step.durationMinutes;
 
     const event = {
       id: generateId('evt_step'),
       title: step.title,
-      dateKey: placed.dateKey,
-      startTime: placed.startTime,
-      endTime: placed.endTime,
+      ...spanToFields(startAbs, currentAbs),
+      isAllDay: false,
       color: protocolColor, // Unified protocol color scheme
       category: 'Protocol',
       stepType: step.stepType || 'active',
@@ -381,22 +363,22 @@ export function instantiateProtocol(protocol, targetDateKey, targetStartMinutes)
   };
 }
 
+// Move one timed event by days + minutes, keeping its duration (may cross midnight)
+function shiftEventBy(evt, deltaDays, deltaMinutes) {
+  const delta = deltaDays * MINUTES_PER_DAY + deltaMinutes;
+  const { startAbs, endAbs } = getEventSpan(evt);
+  return { ...evt, ...spanToFields(startAbs + delta, endAbs + delta) };
+}
+
+function sortByStart(events) {
+  return events
+    .map((evt) => ({ evt, span: getEventSpan(evt) }))
+    .sort((a, b) => a.span.startAbs - b.span.startAbs);
+}
+
 /**
  * Shift entire protocol group by deltaDays and deltaMinutes (Shift + Drag)
  */
-// Move one event by days + minutes, rolling across midnight instead of clamping to the same day
-function shiftEventBy(evt, deltaDays, deltaMinutes) {
-  const startMin = timeToMinutes(evt.startTime);
-  const duration = timeToMinutes(evt.endTime) - startMin;
-  const placed = placeAtAbsoluteMinute(evt.dateKey, deltaDays * MINUTES_PER_DAY + startMin + deltaMinutes, duration);
-  return {
-    ...evt,
-    dateKey: placed.dateKey,
-    startTime: placed.startTime,
-    endTime: placed.endTime
-  };
-}
-
 export function shiftProtocolGroup(allEvents, protocolGroupId, deltaDays, deltaMinutes) {
   return allEvents.map((evt) => (
     evt.protocolGroupId === protocolGroupId ? shiftEventBy(evt, deltaDays, deltaMinutes) : evt
@@ -407,12 +389,8 @@ export function shiftProtocolGroup(allEvents, protocolGroupId, deltaDays, deltaM
  * Cascade Shift: Shift selected step and push downstream steps by the delta, preserving subsequent gaps! (Ctrl / Cmd + Drag)
  */
 export function cascadeShiftProtocolSteps(allEvents, protocolGroupId, targetStepId, deltaDays, deltaMinutes, includeTarget = true) {
-  const groupSteps = allEvents
-    .filter((e) => e.protocolGroupId === protocolGroupId)
-    .sort((a, b) => {
-      if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
-      return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
-    });
+  const groupSteps = sortByStart(allEvents.filter((e) => e.protocolGroupId === protocolGroupId))
+    .map((item) => item.evt);
 
   const targetIdx = groupSteps.findIndex((e) => e.id === targetStepId);
   if (targetIdx === -1) return allEvents;
@@ -430,25 +408,13 @@ export function cascadeShiftProtocolSteps(allEvents, protocolGroupId, targetStep
 export function checkProtocolChainIntegrity(allEvents, protocolGroupId) {
   if (!protocolGroupId) return new Set();
 
-  const groupSteps = allEvents
-    .filter((e) => e.protocolGroupId === protocolGroupId)
-    .sort((a, b) => {
-      if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
-      return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
-    });
-
+  const groupSteps = sortByStart(allEvents.filter((e) => e.protocolGroupId === protocolGroupId));
   const brokenSteps = new Set();
 
+  // A step is flagged when it starts before the previous step ends (also across days)
   for (let i = 1; i < groupSteps.length; i++) {
-    const prev = groupSteps[i - 1];
-    const curr = groupSteps[i];
-
-    if (curr.dateKey === prev.dateKey) {
-      if (timeToMinutes(curr.startTime) < timeToMinutes(prev.endTime)) {
-        brokenSteps.add(curr.id);
-      }
-    } else if (curr.dateKey < prev.dateKey) {
-      brokenSteps.add(curr.id);
+    if (groupSteps[i].span.startAbs < groupSteps[i - 1].span.endAbs) {
+      brokenSteps.add(groupSteps[i].evt.id);
     }
   }
 

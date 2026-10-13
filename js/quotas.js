@@ -4,7 +4,31 @@
  * Supports dynamic summation, split event preservation, and over-scheduling visual indicators
  */
 
-import { generateId, timeToMinutes, getWeekDates, formatDateKey } from './utils.js';
+import {
+  generateId,
+  getWeekDates,
+  formatDateKey,
+  isAllDayEvent,
+  getEventSpan,
+  fromAbsMinutes,
+  toAbsMinutes,
+  spanToFields,
+  MINUTES_PER_DAY
+} from './utils.js';
+
+// [{ dateKey, minutes }] for each calendar day a timed event covers
+function splitMinutesByDay(evt) {
+  const { startAbs, endAbs } = getEventSpan(evt);
+  const parts = [];
+  let cursor = startAbs;
+  while (cursor < endAbs) {
+    const dayEnd = (Math.floor(cursor / MINUTES_PER_DAY) + 1) * MINUTES_PER_DAY;
+    const segmentEnd = Math.min(endAbs, dayEnd);
+    parts.push({ dateKey: fromAbsMinutes(cursor).dateKey, minutes: segmentEnd - cursor });
+    cursor = segmentEnd;
+  }
+  return parts;
+}
 
 export const DEFAULT_QUOTAS = [
   {
@@ -98,12 +122,9 @@ export function calculateQuotaStats(quotas, events, referenceDate) {
   });
 
   events.forEach((evt) => {
-    const startMin = timeToMinutes(evt.startTime);
-    const endMin = timeToMinutes(evt.endTime);
-    const duration = Math.max(0, endMin - startMin);
-    const [evtYear, evtMonth] = (evt.dateKey || '').split('-').map(Number);
-    const isThisWeek = weekDateKeys.has(evt.dateKey);
-    const isThisMonth = evtYear === refYear && (evtMonth - 1) === refMonth;
+    if (!evt.dateKey) return;
+    // Minutes per calendar day, so an overnight event counts towards each day it covers
+    const perDay = isAllDayEvent(evt) ? [] : splitMinutesByDay(evt);
 
     quotas.forEach((quota) => {
       let matches = false;
@@ -117,16 +138,12 @@ export function calculateQuotaStats(quotas, events, referenceDate) {
 
       if (matches) {
         const s = stats[quota.id];
-        // Total (all-time)
-        s.totalMinutes += duration;
-        // This Month
-        if (isThisMonth) {
-          s.monthlyMinutes += duration;
-        }
-        // This Week
-        if (isThisWeek) {
-          s.weeklyMinutes += duration;
-        }
+        perDay.forEach(({ dateKey, minutes }) => {
+          const [y, m] = dateKey.split('-').map(Number);
+          s.totalMinutes += minutes;
+          if (y === refYear && (m - 1) === refMonth) s.monthlyMinutes += minutes;
+          if (weekDateKeys.has(dateKey)) s.weeklyMinutes += minutes;
+        });
       }
     });
   });
@@ -199,13 +216,12 @@ export function getSuggestedQuotaDuration(stat) {
  * Create a new calendar event from a weekly quota block
  */
 export function createEventFromQuota(quota, dateKey, startMinutes, durationMinutes = 120) {
-  const endMinutes = Math.min(1440, startMinutes + durationMinutes);
+  const startAbs = toAbsMinutes(dateKey, '00:00') + startMinutes;
   return {
     id: generateId('evt_quota'),
     title: quota.title,
-    dateKey: dateKey,
-    startTime: `${String(Math.floor(startMinutes / 60)).padStart(2, '0')}:${String(startMinutes % 60).padStart(2, '0')}`,
-    endTime: `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`,
+    ...spanToFields(startAbs, startAbs + durationMinutes),
+    isAllDay: false,
     color: quota.color || 'lavender',
     category: 'Quota Task',
     quotaId: quota.id,

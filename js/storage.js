@@ -3,8 +3,7 @@
  * Implements schemaVersion: 2, migration pipeline, multi-tab sync, and protocol JSON sharing
  */
 
-import { generateId, formatDateKey, getWeekDates, foldIcsLine, shiftDateKey, parseDateKey } from './utils.js';
-import { BUILT_IN_PROTOCOLS } from './protocols.js';
+import { generateId, formatDateKey, getWeekDates, foldIcsLine, shiftDateKey, parseDateKey, isAllDayEvent } from './utils.js';
 import { DEFAULT_QUOTAS } from './quotas.js';
 
 const DEFAULT_STORAGE_KEY = 'lab_calendar_data_v2';
@@ -310,14 +309,15 @@ export function buildIcsContent(events, seriesList = [], exceptions = []) {
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uid}`);
     lines.push(`DTSTAMP:${nowCompact}`);
-    if (evt.isAllDay) {
+    if (isAllDayEvent(evt)) {
       // DTEND is exclusive for all-day events
       const endKey = evt.endDateKey || evt.dateKey;
       lines.push(`DTSTART;VALUE=DATE:${icsDate(evt.dateKey)}`);
       lines.push(`DTEND;VALUE=DATE:${icsDate(shiftDateKey(endKey, 1))}`);
     } else {
+      // Timed events may end on a later day (overnight incubations)
       lines.push(`DTSTART:${icsDate(evt.dateKey)}T${icsTime(evt.startTime)}`);
-      lines.push(`DTEND:${icsDate(evt.dateKey)}T${icsTime(evt.endTime)}`);
+      lines.push(`DTEND:${icsDate(evt.endDateKey || evt.dateKey)}T${icsTime(evt.endTime)}`);
     }
     lines.push(`SUMMARY:${escapeIcsText(evt.title)}`);
     if (evt.notes) {

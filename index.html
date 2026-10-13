@@ -59,6 +59,7 @@
     <div class="header-right">
       <div class="view-selector">
         <button class="view-btn" data-view="day">Day</button>
+        <button class="view-btn" data-view="3day">3 Days</button>
         <button class="view-btn active" data-view="week">Week</button>
         <button class="view-btn" data-view="month">Month</button>
       </div>
@@ -215,18 +216,26 @@
           <label for="editEventIsAllDay" style="font-size: 13px; font-weight: 500; cursor: pointer; user-select: none;">All day / Multi-day banner event</label>
         </div>
 
-        <div class="form-row-3" id="editEventTimeRow">
-          <div class="form-group">
-            <label>Date</label>
-            <input type="date" class="input-text" id="editEventDate">
+        <div id="editEventTimeRow" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label>Start Date</label>
+              <input type="date" class="input-text" id="editEventDate">
+            </div>
+            <div class="form-group">
+              <label>Start Time</label>
+              <input type="time" class="input-text" id="editEventStartTime" step="900">
+            </div>
           </div>
-          <div class="form-group">
-            <label>Start Time</label>
-            <input type="time" class="input-text" id="editEventStartTime" step="900">
-          </div>
-          <div class="form-group">
-            <label>End Time</label>
-            <input type="time" class="input-text" id="editEventEndTime" step="900">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label>End Date</label>
+              <input type="date" class="input-text" id="editEventEndDateTimed">
+            </div>
+            <div class="form-group">
+              <label>End Time</label>
+              <input type="time" class="input-text" id="editEventEndTime" step="900">
+            </div>
           </div>
         </div>
 
@@ -321,7 +330,13 @@
 
         <!-- Live Visual Timeline Preview -->
         <div class="proto-timeline-preview-container">
-          <div class="timeline-preview-heading">Sequential Execution Timeline Preview</div>
+          <div class="timeline-preview-header">
+            <div class="timeline-preview-heading">Timeline Preview</div>
+            <label class="timeline-preview-start">
+              If started at
+              <input type="time" class="input-sm" id="protoBuildPreviewStart" value="09:00" step="900">
+            </label>
+          </div>
           <div id="protoBuildTimelinePreview"></div>
         </div>
 
@@ -331,7 +346,8 @@
             <label style="font-size: 12px; font-weight:700;">Protocol Steps & Gaps</label>
             <button type="button" class="btn btn-secondary btn-sm" id="protoBuildAddStepBtn">+ Add Step</button>
           </div>
-          <div id="protoBuildStepsList" style="display:flex; flex-direction:column; gap:10px;"></div>
+          <div id="protoBuildStepsList" class="proto-steps-list"></div>
+          <button type="button" class="btn btn-outline proto-add-step-bottom" id="protoBuildAddStepBottomBtn">+ Add Step</button>
         </div>
       </div>
       <div class="modal-footer">

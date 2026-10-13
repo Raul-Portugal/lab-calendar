@@ -18,7 +18,14 @@ import {
   minutesToTime,
   calculateDaysBetween,
   escapeHtml,
-  safeColor
+  safeColor,
+  parseDateKey,
+  shiftDateKey,
+  toAbsMinutes,
+  getEventSpan,
+  getEventDayRange,
+  isAllDayEvent,
+  MINUTES_PER_DAY
 } from './utils.js';
 
 export class CalendarRenderer {
@@ -40,6 +47,9 @@ export class CalendarRenderer {
       this.renderMonthView();
     } else if (this.store.currentView === 'day') {
       this.renderTimeGridView([this.store.currentDate]);
+    } else if (this.store.currentView === '3day') {
+      // Selected day and the two following days (default on phones)
+      this.renderTimeGridView([0, 1, 2].map((offset) => parseDateKey(shiftDateKey(formatDateKey(this.store.currentDate), offset))));
     } else {
       // Default: Week view (Mon to Sun)
       const weekDates = getWeekDates(this.store.currentDate);
@@ -113,12 +123,11 @@ export class CalendarRenderer {
 
     const allDayGrid = document.createElement('div');
     allDayGrid.className = 'cal-allday-grid';
-    allDayGrid.style.gridTemplateColumns = `repeat(${dates.length}, 1fr)`;
+    // minmax(0, 1fr): same widths as the day columns even when titles are long
+    allDayGrid.style.gridTemplateColumns = `repeat(${dates.length}, minmax(0, 1fr))`;
 
     // Filter all-day and multi-day events
-    const allDayEvents = expandedEvents.filter((e) => (
-      (e.isAllDay || (e.endDateKey && e.endDateKey !== e.dateKey)) && this.matchesFilters(e)
-    ));
+    const allDayEvents = expandedEvents.filter((e) => isAllDayEvent(e) && this.matchesFilters(e));
     this.renderAllDayEvents(allDayGrid, dates, allDayEvents);
 
     allDayRow.appendChild(allDayGrid);
@@ -198,22 +207,57 @@ export class CalendarRenderer {
 
     this.container.appendChild(gridWrapper);
 
-    // Restore scroll synchronously (no flash), then measure scrollbar width to align headers
+    // Restore scroll synchronously (no flash). The header and all-day rows are padded by the
+    // body's scrollbar width so their columns line up with the day columns; measured now
+    // (not in requestAnimationFrame, which may never run in a background tab). Touch devices
+    // have overlay scrollbars, so this is often 0.
     scrollContainer.scrollTop = this.preservedScrollTop ?? 8.5 * this.hourHeight;
-    requestAnimationFrame(() => {
-      const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
-      document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
-    });
+    const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
+    document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
   }
 
   /**
    * Render Events on a Day Column
    */
+  /**
+   * The part of each timed event that falls on dateKey. An overnight event yields one
+   * segment per day it covers, with startMin/endMin relative to that day (0..1440).
+   */
+  getDaySegments(dateKey, allExpandedEvents) {
+    const dayStart = toAbsMinutes(dateKey, '00:00');
+    const dayEnd = dayStart + MINUTES_PER_DAY;
+    const segments = [];
+
+    allExpandedEvents.forEach((evt) => {
+      if (isAllDayEvent(evt) || !this.matchesFilters(evt)) return;
+      const { startAbs, endAbs } = getEventSpan(evt);
+      const overlaps = startAbs < dayEnd && (endAbs > dayStart || (endAbs === startAbs && startAbs >= dayStart));
+      if (!overlaps) return;
+      segments.push({
+        ...evt,
+        startAbs,
+        endAbs,
+        startMin: Math.max(startAbs, dayStart) - dayStart,
+        endMin: Math.min(endAbs, dayEnd) - dayStart,
+        segIsStart: startAbs >= dayStart,
+        segIsEnd: endAbs <= dayEnd
+      });
+    });
+    return segments;
+  }
+
+  formatSpanDisplay(evt) {
+    const use24 = this.store.settings.use24Hour;
+    if (!evt.endDateKey || evt.endDateKey === evt.dateKey) {
+      return `${formatTimeDisplay(evt.startTime, use24)} – ${formatTimeDisplay(evt.endTime, use24)}`;
+    }
+    const weekday = (key) => DAY_NAMES_SHORT[(parseDateKey(key).getDay() + 6) % 7];
+    return `${weekday(evt.dateKey)} ${formatTimeDisplay(evt.startTime, use24)} – ${weekday(evt.endDateKey)} ${formatTimeDisplay(evt.endTime, use24)}`;
+  }
+
   renderEventsForDay(dayColumn, dateKey, allExpandedEvents) {
-    // Filter events for this day (exclude all-day events, as they render in all-day banner grid)
-    const dayEvents = allExpandedEvents.filter((evt) => (
-      !evt.isAllDay && evt.dateKey === dateKey && this.matchesFilters(evt)
-    ));
+    // All-day events render in the all-day banner; timed events (incl. overnight parts) here
+    const dayEvents = this.getDaySegments(dateKey, allExpandedEvents);
 
     // Compute overlapping column layout
     const layout = computeEventLayout(dayEvents);
@@ -231,9 +275,10 @@ export class CalendarRenderer {
       const isPassive = evt.stepType === 'passive';
       const overlapsPassive = l.overlapsPassive === true;
       const card = document.createElement('div');
-      card.className = `cal-event-card color-${safeColor(evt.color)} ${evt.isChained ? 'is-chained-step' : ''} ${isPassive ? 'is-passive-step' : ''} ${overlapsPassive ? 'has-passive-underlay' : ''}`;
-      card.id = `evt_${evt.id}`;
+      card.className = `cal-event-card color-${safeColor(evt.color)} ${evt.isChained ? 'is-chained-step' : ''} ${isPassive ? 'is-passive-step' : ''} ${overlapsPassive ? 'has-passive-underlay' : ''} ${evt.segIsStart ? '' : 'continues-before'} ${evt.segIsEnd ? '' : 'continues-after'}`;
+      card.id = `evt_${evt.id}_${dateKey}`;
       card.dataset.eventId = evt.id;
+      card.dataset.segmentDateKey = dateKey;
       if (evt.isSeriesOccurrence) {
         card.dataset.isSeriesOccurrence = 'true';
         card.dataset.seriesId = evt.seriesId;
@@ -254,10 +299,10 @@ export class CalendarRenderer {
         card.style.width = `calc(100% - 4px)`;
         card.style.zIndex = '5';
       } else if (overlapsPassive) {
-        // Leave 26px gap on the left so the underlying passive step remains clearly visible!
-        const gutter = 26;
-        card.style.left = `calc(${leftPercent}% + ${gutter + 2}px)`;
-        card.style.width = `calc(${colWidthPercent}% - ${gutter + 4}px)`;
+        // Leave a gap on the left so the underlying passive step remains visible
+        // (--passive-gutter shrinks in narrow columns, see calendar.css)
+        card.style.left = `calc(${leftPercent}% + var(--passive-gutter) + 2px)`;
+        card.style.width = `calc(${colWidthPercent}% - var(--passive-gutter) - 4px)`;
         card.style.zIndex = '15';
       } else {
         card.style.left = `calc(${leftPercent}% + 2px)`;
@@ -265,9 +310,13 @@ export class CalendarRenderer {
         card.style.zIndex = l.zIndex ? String(l.zIndex) : '15';
       }
 
-      // Build badges
-      const timeDisplay = `${formatTimeDisplay(evt.startTime, this.store.settings.use24Hour)} – ${formatTimeDisplay(evt.endTime, this.store.settings.use24Hour)}`;
-      const durationDisplay = formatDuration(durationMin);
+      // Build badges (time and duration describe the whole event, not just this day's part)
+      const timeDisplay = this.formatSpanDisplay(evt);
+      const durationDisplay = formatDuration(evt.endAbs - evt.startAbs);
+      const continuesBeforeHtml = evt.segIsStart
+        ? ''
+        : `<div class="event-continuation">↑ from ${escapeHtml(this.formatSpanDisplay(evt).split(' – ')[0])}</div>`;
+      const continuesAfterHtml = evt.segIsEnd ? '' : `<div class="event-continuation">continues ↓</div>`;
 
       let stepBadgeHtml = '';
       if (evt.isChained && evt.derivedStepLabel) {
@@ -309,10 +358,12 @@ export class CalendarRenderer {
            </div>`
         : '';
 
+      // Resize handles only where the event actually starts / ends
       card.innerHTML = `
-        <div class="resize-handle resize-handle-top" title="Drag to adjust start time"></div>
+        ${evt.segIsStart ? '<div class="resize-handle resize-handle-top" title="Drag to adjust start time"></div>' : ''}
         ${passiveRibbonHtml}
-        <div class="event-card-inner" style="${isPassive ? 'padding-left: 28px;' : ''}">
+        <div class="event-card-inner">
+          ${continuesBeforeHtml}
           <div class="event-card-header">
             <div class="event-title" title="${escapeHtml(evt.title)}">${escapeHtml(evt.title)}</div>
             ${stepBadgeHtml}
@@ -325,8 +376,9 @@ export class CalendarRenderer {
           </div>
           ${evt.notes && heightPx > 45 ? `<div class="event-notes-preview">${escapeHtml(evt.notes)}</div>` : ''}
           ${evt.isChained ? `<div class="protocol-shift-tip">Shift: whole group • Ctrl: cascade</div>` : ''}
+          ${continuesAfterHtml}
         </div>
-        <div class="resize-handle resize-handle-bottom" title="Drag to adjust end time"></div>
+        ${evt.segIsEnd ? '<div class="resize-handle resize-handle-bottom" title="Drag to adjust end time"></div>' : ''}
       `;
 
       // Hover group linking highlight (toggled in place: re-rendering would reset drag/scroll state)
@@ -572,9 +624,9 @@ export class CalendarRenderer {
       const singleDayEvents = [];
 
       filteredEvents.forEach((evt) => {
-        const startKey = evt.dateKey;
-        const endKey = evt.endDateKey || evt.dateKey;
-        const isMulti = Boolean(evt.isAllDay || (evt.endDateKey && evt.endDateKey !== evt.dateKey));
+        const { firstKey: startKey, lastKey: endKey } = getEventDayRange(evt);
+        // All-day and overnight timed events are drawn as bars across their days
+        const isMulti = isAllDayEvent(evt) || startKey !== endKey;
 
         if (isMulti) {
           if (startKey <= weekMaxKey && endKey >= weekMinKey) {
@@ -600,8 +652,7 @@ export class CalendarRenderer {
 
       // Render multi-day events
       multiDayEvents.forEach((evt) => {
-        const startKey = evt.dateKey;
-        const endKey = evt.endDateKey || evt.dateKey;
+        const { firstKey: startKey, lastKey: endKey } = getEventDayRange(evt);
 
         let startCol = weekDateKeys.indexOf(startKey);
         let isContinuationLeft = false;
