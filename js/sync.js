@@ -4,7 +4,13 @@
  * Zero external libraries required (pure Web Crypto API & native fetch).
  */
 
-const CONFIG_STORAGE_KEY = 'lab_calendar_cloud_config';
+const DEFAULT_CONFIG_STORAGE_KEY = 'lab_calendar_cloud_config';
+
+// Isolated config key when the test suite overrides the storage key
+function getConfigStorageKey() {
+  const override = typeof window !== 'undefined' && window.__LABCAL_STORAGE_KEY__;
+  return override ? `${override}_cloud_config` : DEFAULT_CONFIG_STORAGE_KEY;
+}
 
 export const SUPABASE_SETUP_SQL = `-- Run this in your Supabase SQL Editor (takes 10 seconds):
 CREATE TABLE IF NOT EXISTS user_calendar_data (
@@ -135,13 +141,23 @@ export class SyncManager {
     this.listeners = new Set();
     this.debounceTimer = null;
     this.isSyncing = false;
+    this.syncRequestedWhileBusy = false;
+    this.dirtyGeneration = 0;
+    // async () => 'local' | 'cloud' | null, set by the UI to resolve sync conflicts
+    this.conflictResolver = null;
   }
 
   loadConfig() {
+    const defaults = this.defaultConfig();
     try {
-      const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
+      const raw = localStorage.getItem(getConfigStorageKey());
+      // Merge so configs saved by older versions pick up new fields
+      if (raw) return { ...defaults, ...JSON.parse(raw) };
     } catch (e) {}
+    return defaults;
+  }
+
+  defaultConfig() {
     return {
       supabaseUrl: '',
       supabaseAnonKey: '',
@@ -151,13 +167,27 @@ export class SyncManager {
       refreshToken: '',
       passphrase: '',
       lastSyncedAt: null,
+      // Server updated_at of the cloud row this device last pulled or pushed
+      lastSyncedServerAt: null,
+      // True when this device has edits that are not in the cloud yet
+      localDirty: true,
       autoSync: true
     };
   }
 
+  /**
+   * Record a local data edit so the next sync knows this device has unsynced changes
+   */
+  markDirty() {
+    this.dirtyGeneration += 1;
+    if (this.config.localDirty) return;
+    this.config.localDirty = true;
+    this.saveConfig();
+  }
+
   saveConfig() {
     try {
-      localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(this.config));
+      localStorage.setItem(getConfigStorageKey(), JSON.stringify(this.config));
     } catch (e) {}
   }
 
@@ -208,6 +238,11 @@ export class SyncManager {
       throw new Error(data.error_description || data.msg || data.message || 'Login failed.');
     }
 
+    if (this.config.userId && this.config.userId !== data.user.id) {
+      // Different account: this device has never synced with it
+      this.config.lastSyncedServerAt = null;
+      this.config.localDirty = true;
+    }
     this.config.accessToken = data.access_token;
     this.config.refreshToken = data.refresh_token;
     this.config.userEmail = data.user.email;
@@ -264,57 +299,36 @@ export class SyncManager {
     this.config.refreshToken = '';
     this.config.userId = '';
     this.config.userEmail = '';
+    // The next account this device connects to starts a fresh sync relationship
+    this.config.lastSyncedServerAt = null;
+    this.config.localDirty = true;
     this.saveConfig();
     this.setStatus('local_only', 'Disconnected from cloud.');
   }
 
   /**
-   * Pull latest snapshot from Supabase PostgREST
+   * Authenticated PostgREST request. On 401 the access token is refreshed and the
+   * request retried exactly once (no unbounded recursion).
    */
-  async pullFromCloud() {
-    if (!this.isConnected()) return null;
+  async authedFetch(path, options = {}, allowRetry = true) {
     const url = this.formatBaseUrl(this.config.supabaseUrl);
-    const anonKey = this.config.supabaseAnonKey;
-
-    const res = await fetch(`${url}/rest/v1/user_calendar_data?select=*`, {
-      method: 'GET',
+    const res = await fetch(`${url}${path}`, {
+      ...options,
       headers: {
-        'apikey': anonKey,
+        ...(options.headers || {}),
+        'apikey': this.config.supabaseAnonKey,
         'Authorization': `Bearer ${this.config.accessToken}`
       }
     });
-
-    if (res.status === 401) {
-      // Token expired, attempt refresh
+    if (res.status === 401 && allowRetry) {
       await this.refreshAccessToken();
-      return this.pullFromCloud();
+      return this.authedFetch(path, options, false);
     }
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Failed to fetch cloud data (${res.status}): ${err}`);
-    }
-
-    const rows = await res.json();
-    if (!rows || rows.length === 0) return null;
-
-    const row = rows[0];
-    const decryptedState = await decryptPayload(row.payload, this.config.passphrase);
-    return {
-      updatedAt: row.updated_at,
-      state: decryptedState
-    };
+    return res;
   }
 
-  /**
-   * Push current state to Supabase PostgREST
-   */
-  async pushToCloud() {
-    if (!this.isConnected()) return false;
-    const url = this.formatBaseUrl(this.config.supabaseUrl);
-    const anonKey = this.config.supabaseAnonKey;
-
-    const currentExport = {
+  buildExportSnapshot() {
+    return {
       series: this.store.series,
       exceptions: this.store.exceptions,
       events: this.store.events,
@@ -326,30 +340,68 @@ export class SyncManager {
       settings: this.store.settings,
       timestamp: new Date().toISOString()
     };
+  }
 
-    const encryptedWrapper = await encryptPayload(currentExport, this.config.passphrase);
+  sameServerTime(a, b) {
+    if (!a || !b) return false;
+    return Date.parse(a) === Date.parse(b);
+  }
 
+  /**
+   * Fetch this user's cloud row (still encrypted). Returns null when the cloud is empty.
+   */
+  async pullFromCloud() {
+    if (!this.isConnected()) return null;
+    const userFilter = `user_id=eq.${encodeURIComponent(this.config.userId)}`;
+    const res = await this.authedFetch(`/rest/v1/user_calendar_data?select=updated_at,payload&${userFilter}`, {
+      method: 'GET'
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Failed to fetch cloud data (${res.status}): ${err}`);
+    }
+
+    const rows = await res.json();
+    if (!rows || rows.length === 0) return null;
+    return { updatedAt: rows[0].updated_at, payload: rows[0].payload };
+  }
+
+  /**
+   * Push the current local state, but only if the cloud row is still the version this
+   * device expects (optimistic concurrency on updated_at). expectedServerAt === null
+   * means "the cloud is empty": the row is inserted, failing if one appeared meanwhile.
+   * Throws SyncConflictError when another device wrote first.
+   */
+  async pushToCloud(expectedServerAt) {
+    if (!this.isConnected()) return false;
+
+    const generationAtStart = this.dirtyGeneration;
+    const encryptedWrapper = await encryptPayload(this.buildExportSnapshot(), this.config.passphrase);
     const body = {
       user_id: this.config.userId,
       updated_at: new Date().toISOString(),
       is_encrypted: encryptedWrapper.isEncrypted,
       payload: encryptedWrapper
     };
+    const headers = { 'Content-Type': 'application/json', 'Prefer': 'return=representation' };
 
-    const res = await fetch(`${url}/rest/v1/user_calendar_data`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': anonKey,
-        'Authorization': `Bearer ${this.config.accessToken}`,
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (res.status === 401) {
-      await this.refreshAccessToken();
-      return this.pushToCloud();
+    let res;
+    if (expectedServerAt) {
+      const filter = `user_id=eq.${encodeURIComponent(this.config.userId)}` +
+        `&updated_at=eq.${encodeURIComponent(expectedServerAt)}`;
+      res = await this.authedFetch(`/rest/v1/user_calendar_data?${filter}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(body)
+      });
+    } else {
+      res = await this.authedFetch('/rest/v1/user_calendar_data', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+      if (res.status === 409) throw new SyncConflictError();
     }
 
     if (!res.ok) {
@@ -357,9 +409,33 @@ export class SyncManager {
       throw new Error(`Failed to save to cloud (${res.status}): ${err}`);
     }
 
+    const rows = await res.json();
+    // PATCH matched no row: the cloud changed since expectedServerAt
+    if (!Array.isArray(rows) || rows.length === 0) throw new SyncConflictError();
+
+    this.config.lastSyncedServerAt = rows[0].updated_at || body.updated_at;
     this.config.lastSyncedAt = new Date().toISOString();
+    // Edits made while the push was in flight are still unsynced
+    this.config.localDirty = this.dirtyGeneration !== generationAtStart;
     this.saveConfig();
     return true;
+  }
+
+  /**
+   * Replace local data with a cloud row (undoable via Ctrl+Z)
+   */
+  async applyRemote(remote) {
+    const state = await decryptPayload(remote.payload, this.config.passphrase);
+    if (!state || typeof state !== 'object') throw new Error('Cloud data is empty or unreadable.');
+
+    this.store.pushHistorySnapshot('Sync from cloud');
+    this.store.applyData(state);
+    this.store.notify('cloud_pull');
+
+    this.config.lastSyncedServerAt = remote.updatedAt;
+    this.config.lastSyncedAt = new Date().toISOString();
+    this.config.localDirty = false;
+    this.saveConfig();
   }
 
   /**
@@ -381,7 +457,10 @@ export class SyncManager {
 
     const data = await res.json();
     if (!res.ok) {
-      this.signOut();
+      // Keep the sync bookkeeping: signing back into the same account should resume cleanly
+      this.config.accessToken = '';
+      this.config.refreshToken = '';
+      this.saveConfig();
       throw new Error('Session expired. Please sign in again.');
     }
 
@@ -391,7 +470,10 @@ export class SyncManager {
   }
 
   /**
-   * Execute 2-Way Conflict Resolution Synchronization
+   * Two-way sync. Never discards data silently:
+   * - cloud unchanged since our last sync -> push local edits (if any)
+   * - cloud changed, no local edits       -> apply cloud
+   * - both changed                         -> ask the user via conflictResolver
    */
   async syncNow() {
     if (!this.isConnected()) {
@@ -399,67 +481,87 @@ export class SyncManager {
       return;
     }
 
-    if (this.isSyncing) return;
+    if (this.isSyncing) {
+      this.syncRequestedWhileBusy = true;
+      return;
+    }
     this.isSyncing = true;
     this.setStatus('syncing', 'Syncing with cloud...');
 
     try {
-      const cloudData = await this.pullFromCloud();
-
-      if (!cloudData || !cloudData.state) {
-        // Cloud is empty -> Push current local state
-        await this.pushToCloud();
-        this.setStatus('synced', 'Synced (Initial cloud backup created)');
-      } else {
-        const cloudTime = new Date(cloudData.updatedAt || cloudData.state.timestamp || 0).getTime();
-        const localTime = new Date(this.config.lastSyncedAt || 0).getTime();
-
-        // If cloud snapshot is newer, merge it locally
-        if (cloudTime > localTime) {
-          const s = cloudData.state;
-          if (s.series) this.store.series = s.series;
-          if (s.exceptions) this.store.exceptions = s.exceptions;
-          if (s.events) this.store.events = s.events;
-          if (s.quotas) this.store.quotas = s.quotas;
-          if (s.customProtocols) this.store.customProtocols = s.customProtocols;
-          if (s.deletedProtocolIds) this.store.deletedProtocolIds = new Set(s.deletedProtocolIds);
-          if (s.quickClasses) this.store.quickClasses = s.quickClasses;
-          if (s.categories) this.store.categories = s.categories;
-
-          this.store.notify('import');
-          this.config.lastSyncedAt = cloudData.updatedAt;
-          this.saveConfig();
-          this.setStatus('synced', `Synced with cloud (Updated from other device at ${new Date(cloudTime).toLocaleTimeString()})`);
-        } else {
-          // Local changes are newer -> Push to cloud
-          await this.pushToCloud();
-          this.setStatus('synced', `Synced with cloud at ${new Date().toLocaleTimeString()}`);
+      // A conflicting write between our pull and push makes us pull again
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const remote = await this.pullFromCloud();
+        try {
+          await this.reconcile(remote);
+          break;
+        } catch (err) {
+          if (!(err instanceof SyncConflictError) || attempt === 2) throw err;
         }
       }
     } catch (err) {
       console.error('Cloud sync error:', err);
-      this.setStatus('error', err.message);
+      this.setStatus('error', err instanceof SyncConflictError
+        ? 'Another device keeps writing to the cloud. Try syncing again.'
+        : err.message);
     } finally {
       this.isSyncing = false;
+      if (this.syncRequestedWhileBusy) {
+        this.syncRequestedWhileBusy = false;
+        this.syncNow();
+      }
+    }
+  }
+
+  async reconcile(remote) {
+    const time = () => new Date().toLocaleTimeString();
+
+    if (!remote) {
+      await this.pushToCloud(null);
+      this.setStatus('synced', 'Synced (Initial cloud backup created)');
+      return;
+    }
+
+    const cloudChanged = !this.sameServerTime(remote.updatedAt, this.config.lastSyncedServerAt);
+    const localDirty = Boolean(this.config.localDirty);
+
+    if (!cloudChanged) {
+      if (localDirty) await this.pushToCloud(remote.updatedAt);
+      this.setStatus('synced', `Synced with cloud at ${time()}`);
+      return;
+    }
+
+    if (!localDirty) {
+      await this.applyRemote(remote);
+      this.setStatus('synced', `Updated from another device at ${time()}`);
+      return;
+    }
+
+    const choice = this.conflictResolver ? await this.conflictResolver() : null;
+    if (choice === 'cloud') {
+      await this.applyRemote(remote);
+      this.setStatus('synced', `Replaced this device with the cloud version at ${time()}`);
+    } else if (choice === 'local') {
+      await this.pushToCloud(remote.updatedAt);
+      this.setStatus('synced', `Replaced the cloud with this device's version at ${time()}`);
+    } else {
+      this.setStatus('error', 'Sync paused: this device and the cloud both have changes. Click Sync Now to choose which to keep.');
     }
   }
 
   /**
-   * Debounced Auto-Sync triggered on local store mutation
+   * Debounced Auto-Sync triggered on local data edits
    */
   scheduleAutoSync() {
     if (!this.isConnected() || !this.config.autoSync) return;
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = setTimeout(() => this.syncNow(), 1500);
+  }
+}
 
-    this.debounceTimer = setTimeout(() => {
-      this.pushToCloud()
-        .then(() => {
-          this.setStatus('synced', `Auto-synced at ${new Date().toLocaleTimeString()}`);
-        })
-        .catch((err) => {
-          console.warn('Auto-sync notice:', err.message);
-          this.setStatus('error', err.message);
-        });
-    }, 1500);
+export class SyncConflictError extends Error {
+  constructor() {
+    super('The cloud copy changed while syncing.');
+    this.name = 'SyncConflictError';
   }
 }

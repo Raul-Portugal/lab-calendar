@@ -1,0 +1,147 @@
+/**
+ * Lab Calendar - Touch & Small-Screen Layout
+ * Loaded last so these rules override the desktop styles.
+ */
+
+/* Touch: keep native scrolling, but no text selection / iOS callout while long-pressing */
+.cal-day-column,
+.cal-event-card,
+.month-cell {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Sidebar item armed for tap-to-place (touch fallback for drag & drop) */
+.is-armed-source {
+  outline: 2px solid var(--google-blue);
+  outline-offset: 2px;
+  background-color: var(--google-blue-light, #e8f0fe);
+}
+
+@media (max-width: 768px) {
+  body {
+    height: 100dvh;
+  }
+
+  /* Header: two compact rows instead of one overflowing row */
+  .app-header {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .header-left {
+    order: 1;
+    flex: 1 1 100%;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .app-logo {
+    display: none;
+  }
+
+  .nav-controls {
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .current-date-title {
+    font-size: 15px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-left: 4px;
+  }
+
+  .header-right {
+    order: 2;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .header-right .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  #cloudSyncBtn .sync-dot {
+    margin-right: 0;
+  }
+
+  .header-middle {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .search-box {
+    height: 36px;
+  }
+
+  .view-btn {
+    padding: 6px 8px;
+  }
+
+  .btn {
+    padding: 6px 9px;
+  }
+
+  /* Export is still available under "More" */
+  #directGcalBtn {
+    display: none;
+  }
+
+  /* Status dot only */
+  #cloudSyncLabel {
+    display: none;
+  }
+
+  /* Sidebar slides over the calendar instead of squeezing it */
+  .app-sidebar,
+  .app-sidebar.collapsed {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 300;
+    width: min(300px, 85vw);
+    min-width: 0;
+    padding: 16px 12px;
+    border-right: 1px solid var(--google-grey-200);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .app-sidebar.collapsed {
+    transform: translateX(-105%);
+    box-shadow: none;
+  }
+
+  /* Dialogs and popovers fit the screen */
+  .modal-backdrop {
+    padding: 8px;
+  }
+
+  .modal-dialog {
+    max-height: calc(100dvh - 16px);
+  }
+
+  .quick-create-popover {
+    width: min(320px, calc(100vw - 20px));
+  }
+
+  .app-toast {
+    max-width: calc(100vw - 24px);
+    text-align: center;
+  }
+
+  /* Bigger touch targets for resize handles */
+  .resize-handle {
+    min-height: 12px;
+  }
+}

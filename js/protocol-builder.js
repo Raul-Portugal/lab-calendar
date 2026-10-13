@@ -4,8 +4,15 @@
  * active/passive step type selector, timeline preview, and single protocol export
  */
 
-import { generateId, formatDuration } from './utils.js';
+import { generateId, formatDuration, escapeHtml, safeColor } from './utils.js';
 import { exportSingleProtocol } from './storage.js';
+
+// Whole minutes within [min, 1440]; fallback for empty / invalid input
+function clampMinutes(value, min, fallback) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || value === '') return fallback;
+  return Math.min(1440, Math.max(min, n));
+}
 
 export class ProtocolBuilder {
   constructor(store, onProtocolSaved) {
@@ -52,10 +59,13 @@ export class ProtocolBuilder {
   }
 
   open(templateProtocol = null) {
-    this.editingProtocolId = templateProtocol ? templateProtocol.id : null;
+    // Custom protocols are edited in place; built-ins are copied into a new custom protocol
+    const isCustom = Boolean(templateProtocol) &&
+      this.store.customProtocols.some((p) => p.id === templateProtocol.id);
+    this.editingProtocolId = isCustom ? templateProtocol.id : null;
 
     if (templateProtocol) {
-      this.nameInput.value = `${templateProtocol.name} (Custom)`;
+      this.nameInput.value = isCustom ? templateProtocol.name : `${templateProtocol.name} (Custom)`;
       this.categoryInput.value = templateProtocol.category || 'Protocol';
       this.colorSelect.value = templateProtocol.color || 'ocean';
       this.descInput.value = templateProtocol.description || '';
@@ -160,7 +170,7 @@ export class ProtocolBuilder {
         <div class="step-form-grid">
           <div class="form-group full-width">
             <label>Step Title</label>
-            <input type="text" class="input-sm step-title-input" value="${step.title || ''}" placeholder="e.g. Primary Antibody Incubation" />
+            <input type="text" class="input-sm step-title-input" value="${escapeHtml(step.title || '')}" placeholder="e.g. Primary Antibody Incubation" />
           </div>
 
           <div class="form-group">
@@ -182,31 +192,17 @@ export class ProtocolBuilder {
 
           <div class="form-group ${isAnchored ? '' : 'hidden'} step-anchor-time-wrapper">
             <label>Start Time on Day</label>
-            <input type="time" class="input-sm step-anchor-time-input" value="${step.anchorTime || '09:00'}" />
+            <input type="time" class="input-sm step-anchor-time-input" value="${escapeHtml(step.anchorTime || '09:00')}" />
           </div>
 
           <div class="form-group ${isAnchored ? 'hidden' : ''} step-gap-wrapper">
-            <label>Wait Gap Before</label>
-            <select class="input-sm step-gap-select">
-              <option value="0" ${step.gapMinutes === 0 ? 'selected' : ''}>0 min (Immediate)</option>
-              <option value="15" ${step.gapMinutes === 15 ? 'selected' : ''}>15 min gap</option>
-              <option value="30" ${step.gapMinutes === 30 ? 'selected' : ''}>30 min gap</option>
-              <option value="60" ${step.gapMinutes === 60 ? 'selected' : ''}>1 hour gap</option>
-            </select>
+            <label>Wait Gap Before (min)</label>
+            <input type="number" class="input-sm step-gap-input" min="0" max="1440" step="5" inputmode="numeric" value="${escapeHtml(step.gapMinutes || 0)}" />
           </div>
 
           <div class="form-group">
-            <label>Duration</label>
-            <select class="input-sm step-duration-select">
-              <option value="15" ${step.durationMinutes === 15 ? 'selected' : ''}>15 min</option>
-              <option value="30" ${step.durationMinutes === 30 ? 'selected' : ''}>30 min</option>
-              <option value="45" ${step.durationMinutes === 45 ? 'selected' : ''}>45 min</option>
-              <option value="60" ${step.durationMinutes === 60 ? 'selected' : ''}>1 hour</option>
-              <option value="90" ${step.durationMinutes === 90 ? 'selected' : ''}>1.5 hours</option>
-              <option value="120" ${step.durationMinutes === 120 ? 'selected' : ''}>2 hours</option>
-              <option value="150" ${step.durationMinutes === 150 ? 'selected' : ''}>2.5 hours</option>
-              <option value="180" ${step.durationMinutes === 180 ? 'selected' : ''}>3 hours</option>
-            </select>
+            <label>Duration (min)</label>
+            <input type="number" class="input-sm step-duration-input" min="5" max="1440" step="5" inputmode="numeric" value="${escapeHtml(step.durationMinutes || 30)}" />
           </div>
 
           <div class="form-group">
@@ -220,7 +216,7 @@ export class ProtocolBuilder {
 
           <div class="form-group full-width">
             <label>Reagents & Bench Notes</label>
-            <input type="text" class="input-sm step-notes-input" value="${step.notes || ''}" placeholder="e.g. Centrifuge 4°C, 12,000 rpm; add DTT fresh" />
+            <input type="text" class="input-sm step-notes-input" value="${escapeHtml(step.notes || '')}" placeholder="e.g. Centrifuge 4°C, 12,000 rpm; add DTT fresh" />
           </div>
         </div>
       `;
@@ -247,13 +243,15 @@ export class ProtocolBuilder {
         this.renderTimelinePreview();
       });
 
-      stepRow.querySelector('.step-gap-select')?.addEventListener('change', (e) => {
-        step.gapMinutes = parseInt(e.target.value, 10);
+      stepRow.querySelector('.step-gap-input')?.addEventListener('change', (e) => {
+        step.gapMinutes = clampMinutes(e.target.value, 0, 0);
+        e.target.value = step.gapMinutes;
         this.renderTimelinePreview();
       });
 
-      stepRow.querySelector('.step-duration-select').addEventListener('change', (e) => {
-        step.durationMinutes = parseInt(e.target.value, 10);
+      stepRow.querySelector('.step-duration-input').addEventListener('change', (e) => {
+        step.durationMinutes = clampMinutes(e.target.value, 5, 30);
+        e.target.value = step.durationMinutes;
         this.renderTimelinePreview();
       });
 
@@ -276,7 +274,7 @@ export class ProtocolBuilder {
 
   renderTimelinePreview() {
     this.previewContainer.innerHTML = '';
-    const themeColor = this.colorSelect.value || 'ocean';
+    const themeColor = safeColor(this.colorSelect.value);
 
     // Group steps by computed day
     let curDay = 0;
@@ -312,7 +310,7 @@ export class ProtocolBuilder {
         stepPill.innerHTML = `
           <div class="pill-badge">#${s.index}</div>
           <div class="pill-content">
-            <span class="pill-name">${s.title || 'Untitled Step'}</span>
+            <span class="pill-name">${escapeHtml(s.title || 'Untitled Step')}</span>
             <span class="pill-meta">${formatDuration(s.durationMinutes)} • ${isPassive ? 'Passive (Hatched)' : 'Active'}</span>
           </div>
         `;
@@ -352,13 +350,16 @@ export class ProtocolBuilder {
       totalDays: maxDayOffset + 1,
       version: 1,
       description: this.descInput.value || '',
-      steps: this.steps
+      steps: JSON.parse(JSON.stringify(this.steps))
     };
 
+    // Previously this deleted and re-added the protocol under the same id, which put the id
+    // in deletedProtocolIds and made the edited protocol disappear from the library.
     if (this.editingProtocolId) {
-      this.store.deleteCustomProtocol(this.editingProtocolId);
+      this.store.updateCustomProtocol(this.editingProtocolId, protocol);
+    } else {
+      this.store.addCustomProtocol(protocol);
     }
-    this.store.addCustomProtocol(protocol);
 
     this.close();
     if (this.onProtocolSaved) {

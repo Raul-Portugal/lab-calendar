@@ -17,7 +17,8 @@ import {
   getPaletteColor,
   minutesToTime,
   calculateDaysBetween,
-  escapeHtml
+  escapeHtml,
+  safeColor
 } from './utils.js';
 
 export class CalendarRenderer {
@@ -29,6 +30,10 @@ export class CalendarRenderer {
   }
 
   render() {
+    // Keep the user's scroll position across re-renders of the time grid;
+    // only scroll to the start of the work day on first display.
+    const prevScrollEl = document.getElementById('calendarScrollBody');
+    this.preservedScrollTop = prevScrollEl ? prevScrollEl.scrollTop : null;
     this.container.innerHTML = '';
 
     if (this.store.currentView === 'month') {
@@ -111,7 +116,9 @@ export class CalendarRenderer {
     allDayGrid.style.gridTemplateColumns = `repeat(${dates.length}, 1fr)`;
 
     // Filter all-day and multi-day events
-    const allDayEvents = expandedEvents.filter((e) => e.isAllDay || (e.endDateKey && e.endDateKey !== e.dateKey));
+    const allDayEvents = expandedEvents.filter((e) => (
+      (e.isAllDay || (e.endDateKey && e.endDateKey !== e.dateKey)) && this.matchesFilters(e)
+    ));
     this.renderAllDayEvents(allDayGrid, dates, allDayEvents);
 
     allDayRow.appendChild(allDayGrid);
@@ -191,14 +198,11 @@ export class CalendarRenderer {
 
     this.container.appendChild(gridWrapper);
 
-    // Measure scrollbar width immediately to perfectly align day headers with body columns
+    // Restore scroll synchronously (no flash), then measure scrollbar width to align headers
+    scrollContainer.scrollTop = this.preservedScrollTop ?? 8.5 * this.hourHeight;
     requestAnimationFrame(() => {
-      const scrollEl = document.getElementById('calendarScrollBody');
-      if (scrollEl) {
-        const scrollbarWidth = scrollEl.offsetWidth - scrollEl.clientWidth;
-        document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
-        scrollEl.scrollTop = 8.5 * this.hourHeight;
-      }
+      const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
+      document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
     });
   }
 
@@ -207,23 +211,9 @@ export class CalendarRenderer {
    */
   renderEventsForDay(dayColumn, dateKey, allExpandedEvents) {
     // Filter events for this day (exclude all-day events, as they render in all-day banner grid)
-    const dayEvents = allExpandedEvents.filter((evt) => {
-      if (evt.isAllDay) return false;
-      if (evt.dateKey !== dateKey) return false;
-      // Search filter
-      if (this.store.searchQuery) {
-        const q = this.store.searchQuery;
-        const matchTitle = evt.title.toLowerCase().includes(q);
-        const matchProto = evt.protocolName && evt.protocolName.toLowerCase().includes(q);
-        const matchNotes = evt.notes && evt.notes.toLowerCase().includes(q);
-        if (!matchTitle && !matchProto && !matchNotes) return false;
-      }
-      // Category filter
-      if (evt.category && !this.store.visibleCategories.has(evt.category)) {
-        return false;
-      }
-      return true;
-    });
+    const dayEvents = allExpandedEvents.filter((evt) => (
+      !evt.isAllDay && evt.dateKey === dateKey && this.matchesFilters(evt)
+    ));
 
     // Compute overlapping column layout
     const layout = computeEventLayout(dayEvents);
@@ -241,7 +231,7 @@ export class CalendarRenderer {
       const isPassive = evt.stepType === 'passive';
       const overlapsPassive = l.overlapsPassive === true;
       const card = document.createElement('div');
-      card.className = `cal-event-card color-${evt.color || 'ocean'} ${evt.isChained ? 'is-chained-step' : ''} ${isPassive ? 'is-passive-step' : ''} ${overlapsPassive ? 'has-passive-underlay' : ''}`;
+      card.className = `cal-event-card color-${safeColor(evt.color)} ${evt.isChained ? 'is-chained-step' : ''} ${isPassive ? 'is-passive-step' : ''} ${overlapsPassive ? 'has-passive-underlay' : ''}`;
       card.id = `evt_${evt.id}`;
       card.dataset.eventId = evt.id;
       if (evt.isSeriesOccurrence) {
@@ -282,9 +272,9 @@ export class CalendarRenderer {
       let stepBadgeHtml = '';
       if (evt.isChained && evt.derivedStepLabel) {
         stepBadgeHtml = `
-          <div class="step-counter-badge" title="${evt.derivedStepLabel} in ${evt.protocolName || 'Protocol'}">
+          <div class="step-counter-badge" title="${escapeHtml(evt.derivedStepLabel)} in ${escapeHtml(evt.protocolName || 'Protocol')}">
             <svg class="badge-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 19v1a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-1l4-5V8a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1v6l4 5m-8-9v-2h-2v2h2m0 4.5l-2.5 3.12h7L13 14.5V12h-2v2.5Z"/></svg>
-            <span>${evt.derivedStepLabel}</span>
+            <span>${escapeHtml(evt.derivedStepLabel)}</span>
           </div>
         `;
       } else if (evt.quotaId) {
@@ -324,32 +314,61 @@ export class CalendarRenderer {
         ${passiveRibbonHtml}
         <div class="event-card-inner" style="${isPassive ? 'padding-left: 28px;' : ''}">
           <div class="event-card-header">
-            <div class="event-title" title="${evt.title}">${evt.title}</div>
+            <div class="event-title" title="${escapeHtml(evt.title)}">${escapeHtml(evt.title)}</div>
             ${stepBadgeHtml}
           </div>
           ${warningHtml}
           <div class="event-time-row">
-            <span class="event-time">${timeDisplay}</span>
+            <span class="event-time">${escapeHtml(timeDisplay)}</span>
             <span class="event-duration">(${durationDisplay})</span>
             ${isPassive ? `<span class="passive-pill">Passive</span>` : ''}
           </div>
-          ${evt.notes && heightPx > 45 ? `<div class="event-notes-preview">${evt.notes}</div>` : ''}
+          ${evt.notes && heightPx > 45 ? `<div class="event-notes-preview">${escapeHtml(evt.notes)}</div>` : ''}
           ${evt.isChained ? `<div class="protocol-shift-tip">Shift: whole group • Ctrl: cascade</div>` : ''}
         </div>
         <div class="resize-handle resize-handle-bottom" title="Drag to adjust end time"></div>
       `;
 
-      // Hover group linking highlight
+      // Hover group linking highlight (toggled in place: re-rendering would reset drag/scroll state)
       if (evt.protocolGroupId) {
         card.addEventListener('mouseenter', () => {
           this.store.setHoveredProtocolGroup(evt.protocolGroupId);
+          this.highlightProtocolGroup(evt.protocolGroupId);
         });
         card.addEventListener('mouseleave', () => {
           this.store.setHoveredProtocolGroup(null);
+          this.highlightProtocolGroup(null);
         });
       }
 
       dayColumn.appendChild(card);
+    });
+  }
+
+  /**
+   * Search + category filter shared by every view. Only events in a known, unchecked
+   * category are hidden (events whose category was deleted stay visible).
+   */
+  matchesFilters(evt) {
+    const q = this.store.searchQuery;
+    if (q) {
+      const haystack = [evt.title, evt.protocolName, evt.notes]
+        .filter((v) => typeof v === 'string')
+        .join('\n')
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    if (evt.category &&
+        !this.store.visibleCategories.has(evt.category) &&
+        this.store.categories.some((c) => c.name === evt.category)) {
+      return false;
+    }
+    return true;
+  }
+
+  highlightProtocolGroup(groupId) {
+    this.container.querySelectorAll('.cal-event-card[data-protocol-group-id]').forEach((card) => {
+      card.classList.toggle('linked-group-highlight', Boolean(groupId) && card.dataset.protocolGroupId === groupId);
     });
   }
 
@@ -398,15 +417,7 @@ export class CalendarRenderer {
     const allExpanded = this.store.getExpandedEventsForRange(allDateKeys);
 
     // Apply category & search query filters
-    const filteredEvents = allExpanded.filter((e) => {
-      if (this.store.visibleCategories.size > 0 && !this.store.visibleCategories.has(e.category)) {
-        return false;
-      }
-      if (this.store.searchQuery && !e.title.toLowerCase().includes(this.store.searchQuery)) {
-        return false;
-      }
-      return true;
-    });
+    const filteredEvents = allExpanded.filter((e) => this.matchesFilters(e));
 
     // Weeks container
     const weeksContainer = document.createElement('div');
@@ -432,19 +443,17 @@ export class CalendarRenderer {
 
     const onGlobalMouseMove = (e) => {
       if (!isDragging) return;
-      let cell = e.target?.closest?.('.month-cell');
+      // elementFromPoint, not e.target: with pointer capture e.target stays the start cell
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      let cell = target?.closest?.('.month-cell');
       if (!cell) {
-        const target = document.elementFromPoint(e.clientX, e.clientY);
-        cell = target?.closest?.('.month-cell');
-        if (!cell) {
-          const weekRow = (target || e.target)?.closest?.('.month-week-row');
-          if (weekRow) {
-            const rect = weekRow.getBoundingClientRect();
-            const relX = Math.max(0, Math.min(e.clientX - rect.left, rect.width - 1));
-            const colIdx = Math.min(6, Math.max(0, Math.floor((relX / rect.width) * 7)));
-            const daysBg = weekRow.querySelector('.month-week-days-bg');
-            cell = daysBg?.children[colIdx];
-          }
+        const weekRow = (target || e.target)?.closest?.('.month-week-row');
+        if (weekRow) {
+          const rect = weekRow.getBoundingClientRect();
+          const relX = Math.max(0, Math.min(e.clientX - rect.left, rect.width - 1));
+          const colIdx = Math.min(6, Math.max(0, Math.floor((relX / rect.width) * 7)));
+          const daysBg = weekRow.querySelector('.month-week-days-bg');
+          cell = daysBg?.children[colIdx];
         }
       }
       if (cell && cell.dataset.dateKey && cell.dataset.dateKey !== dragCurrentKey) {
@@ -456,8 +465,8 @@ export class CalendarRenderer {
     const onGlobalMouseUp = () => {
       if (!isDragging) return;
       isDragging = false;
-      window.removeEventListener('mousemove', onGlobalMouseMove);
-      window.removeEventListener('mouseup', onGlobalMouseUp);
+      window.removeEventListener('pointermove', onGlobalMouseMove);
+      window.removeEventListener('pointerup', onGlobalMouseUp);
 
       monthViewContainer.querySelectorAll('.month-cell.is-drag-selected').forEach((c) => {
         c.classList.remove('is-drag-selected');
@@ -505,7 +514,7 @@ export class CalendarRenderer {
         dateNumber.textContent = cellDate.getDate();
 
         // Clicking date number navigates to Day View
-        dateNumber.addEventListener('mousedown', (e) => e.stopPropagation());
+        dateNumber.addEventListener('pointerdown', (e) => e.stopPropagation());
         dateNumber.addEventListener('click', (e) => {
           e.stopPropagation();
           this.store.setDate(cellDate);
@@ -522,15 +531,31 @@ export class CalendarRenderer {
           }
         });
 
-        // Click-and-drag start on cell
-        cellEl.addEventListener('mousedown', (e) => {
-          if (e.button !== 0) return;
+        // Click-and-drag start on cell (mouse / pen). Touch: a tap creates an all-day
+        // event on that day, while a swipe keeps scrolling the page.
+        cellEl.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0 || !e.isPrimary) return;
+          if (e.pointerType === 'touch') {
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const onTouchEnd = (up) => {
+              window.removeEventListener('pointerup', onTouchEnd);
+              window.removeEventListener('pointercancel', onTouchEnd);
+              if (up.type === 'pointerup' && Math.hypot(up.clientX - startX, up.clientY - startY) < 10) {
+                window.app?.openEventEditModal({ isAllDay: true, dateKey, endDateKey: dateKey, title: '' });
+              }
+            };
+            window.addEventListener('pointerup', onTouchEnd);
+            window.addEventListener('pointercancel', onTouchEnd);
+            return;
+          }
+          e.preventDefault();
           isDragging = true;
           dragStartKey = dateKey;
           dragCurrentKey = dateKey;
           updateHighlight(dragStartKey, dragCurrentKey);
-          window.addEventListener('mousemove', onGlobalMouseMove);
-          window.addEventListener('mouseup', onGlobalMouseUp);
+          window.addEventListener('pointermove', onGlobalMouseMove);
+          window.addEventListener('pointerup', onGlobalMouseUp);
         });
 
         daysBg.appendChild(cellEl);
@@ -564,8 +589,8 @@ export class CalendarRenderer {
 
       // Sort multi-day events: longer spans first, then start date
       multiDayEvents.sort((a, b) => {
-        const spanA = (a.endDateKey || a.dateKey).localeCompare(a.dateKey);
-        const spanB = (b.endDateKey || b.dateKey).localeCompare(b.dateKey);
+        const spanA = calculateDaysBetween(a.dateKey, a.endDateKey || a.dateKey);
+        const spanB = calculateDaysBetween(b.dateKey, b.endDateKey || b.dateKey);
         if (spanA !== spanB) return spanB - spanA;
         return a.dateKey.localeCompare(b.dateKey);
       });
@@ -594,7 +619,7 @@ export class CalendarRenderer {
 
         const span = (endCol - startCol) + 1;
         const bar = document.createElement('div');
-        bar.className = `month-multiday-bar color-${evt.color || 'ocean'} ${isContinuationLeft ? 'is-continuation-left' : ''} ${isContinuationRight ? 'is-continuation-right' : ''}`;
+        bar.className = `month-multiday-bar color-${safeColor(evt.color)} ${isContinuationLeft ? 'is-continuation-left' : ''} ${isContinuationRight ? 'is-continuation-right' : ''}`;
         bar.style.gridColumn = `${startCol + 1} / span ${span}`;
         bar.dataset.eventId = evt.id;
 
@@ -603,7 +628,7 @@ export class CalendarRenderer {
         bar.innerHTML = `<span class="allday-title">${escapeHtml(evt.title)}${spanLabel}</span>`;
         bar.title = `${evt.title} (${startKey}${endKey !== startKey ? ' to ' + endKey : ''})`;
 
-        bar.addEventListener('mousedown', (e) => e.stopPropagation());
+        bar.addEventListener('pointerdown', (e) => e.stopPropagation());
         bar.addEventListener('click', (e) => {
           e.stopPropagation();
           window.app?.openEventEditModal(evt);
@@ -618,13 +643,13 @@ export class CalendarRenderer {
         if (colIdx === -1) return;
 
         const pill = document.createElement('div');
-        pill.className = `month-event-pill color-${evt.color || 'ocean'}`;
+        pill.className = `month-event-pill color-${safeColor(evt.color)}`;
         pill.style.gridColumn = `${colIdx + 1} / span 1`;
         pill.dataset.eventId = evt.id;
         pill.title = `${evt.startTime || ''} ${evt.title}`;
-        pill.innerHTML = `<span class="pill-dot"></span><span class="pill-text">${evt.startTime ? evt.startTime + ' ' : ''}${escapeHtml(evt.title)}</span>`;
+        pill.innerHTML = `<span class="pill-dot"></span><span class="pill-text">${evt.startTime ? escapeHtml(evt.startTime) + ' ' : ''}${escapeHtml(evt.title)}</span>`;
 
-        pill.addEventListener('mousedown', (e) => e.stopPropagation());
+        pill.addEventListener('pointerdown', (e) => e.stopPropagation());
         pill.addEventListener('click', (e) => {
           e.stopPropagation();
           window.app?.openEventEditModal(evt);
@@ -685,14 +710,14 @@ export class CalendarRenderer {
 
       const span = (endCol - startCol) + 1;
       const bar = document.createElement('div');
-      bar.className = `cal-allday-bar color-${evt.color || 'ocean'}`;
+      bar.className = `cal-allday-bar color-${safeColor(evt.color)}`;
       bar.id = `allday_${evt.id}`;
       bar.dataset.eventId = evt.id;
       bar.style.gridColumn = `${startCol + 1} / span ${span}`;
 
       const multiLabel = span > 1 ? ` (${span}d)` : '';
       bar.innerHTML = `
-        <span class="allday-title">${evt.title}${multiLabel}</span>
+        <span class="allday-title">${escapeHtml(evt.title)}${multiLabel}</span>
       `;
       bar.title = `${evt.title} (${startKey}${endKey !== startKey ? ' to ' + endKey : ''})`;
 

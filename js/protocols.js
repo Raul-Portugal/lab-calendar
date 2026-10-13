@@ -3,7 +3,64 @@
  * Guarantees unified protocol color inheritance and explicit anchor modeling
  */
 
-import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey } from './utils.js';
+import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey, safeColor } from './utils.js';
+
+const STEP_TYPES = ['active', 'passive', 'run'];
+const ANCHOR_TYPES = ['after-previous', 'day-anchored'];
+
+function cleanText(value, maxLength) {
+  return typeof value === 'string' ? value.slice(0, maxLength) : '';
+}
+
+function cleanInt(value, min, max, fallback) {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+/**
+ * Validate an untrusted protocol template (e.g. an imported .protocol.json shared by
+ * another lab member). Only known fields survive; text is kept as plain strings and
+ * numbers / enums are coerced to safe ranges. Returns null if it is not a usable protocol.
+ */
+export function sanitizeProtocol(raw) {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.steps)) return null;
+  const name = cleanText(raw.name, 200).trim();
+  if (!name) return null;
+
+  const steps = raw.steps
+    .filter((s) => s && typeof s === 'object')
+    .slice(0, 100)
+    .map((s) => {
+      const anchorType = ANCHOR_TYPES.includes(s.anchorType) ? s.anchorType : 'after-previous';
+      const anchorTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(s.anchorTime) ? s.anchorTime : '09:00';
+      return {
+        id: generateId('step'),
+        title: cleanText(s.title, 200) || 'Untitled Step',
+        durationMinutes: cleanInt(s.durationMinutes, 5, 1440, 30),
+        anchorType,
+        gapMinutes: cleanInt(s.gapMinutes, 0, 1440, 0),
+        dayOffset: cleanInt(s.dayOffset, 0, 30, 0),
+        anchorTime,
+        stepType: STEP_TYPES.includes(s.stepType) ? s.stepType : 'active',
+        notes: cleanText(s.notes, 2000)
+      };
+    });
+  if (steps.length === 0) return null;
+
+  const maxDayOffset = steps.reduce(
+    (max, s) => (s.anchorType === 'day-anchored' ? Math.max(max, s.dayOffset) : max), 0
+  );
+
+  return {
+    name,
+    category: 'Protocol',
+    color: safeColor(raw.color),
+    totalDays: maxDayOffset + 1,
+    version: cleanInt(raw.version, 1, 1000, 1),
+    description: cleanText(raw.description, 2000),
+    steps
+  };
+}
 
 export const BUILT_IN_PROTOCOLS = [
   {
@@ -249,34 +306,60 @@ export const BUILT_IN_PROTOCOLS = [
  * Instantiate a protocol from a template snapshot
  * All steps inherit the protocol's chosen theme color for visual consistency
  */
+const MINUTES_PER_DAY = 1440;
+
+/**
+ * Place an event at an absolute minute offset from baseDateKey 00:00 (may be negative or
+ * beyond one day). Events never cross midnight. One that would is either moved to start at
+ * the next midnight (rollForward, used when chaining steps so they never overlap their
+ * predecessor) or to whichever side of midnight is closest to the requested time.
+ * Returns the date/time fields plus the absolute start actually used.
+ */
+export function placeAtAbsoluteMinute(baseDateKey, absStartMin, durationMinutes, rollForward = false) {
+  let dayOffset = Math.floor(absStartMin / MINUTES_PER_DAY);
+  let start = absStartMin - dayOffset * MINUTES_PER_DAY;
+  if (start + durationMinutes > MINUTES_PER_DAY && start > 0) {
+    const fitBefore = Math.max(0, MINUTES_PER_DAY - durationMinutes);
+    if (rollForward || (MINUTES_PER_DAY - start) <= (start - fitBefore)) {
+      dayOffset += 1;
+      start = 0;
+    } else {
+      start = fitBefore;
+    }
+  }
+  const end = Math.min(MINUTES_PER_DAY, start + durationMinutes);
+  return {
+    dateKey: shiftDateKey(baseDateKey, dayOffset),
+    startTime: minutesToTime(start),
+    endTime: minutesToTime(end),
+    absStart: dayOffset * MINUTES_PER_DAY + start
+  };
+}
+
 export function instantiateProtocol(protocol, targetDateKey, targetStartMinutes) {
   const protocolGroupId = generateId(`grp_${protocol.id}`);
   const events = [];
   const protocolColor = protocol.color || 'ocean';
 
-  let currentMinutes = targetStartMinutes;
-  let currentDateKey = targetDateKey;
+  // Minutes since targetDateKey 00:00, so long chains roll over into the next day(s)
+  let currentAbs = targetStartMinutes;
 
   protocol.steps.forEach((step, index) => {
     if (step.anchorType === 'day-anchored') {
-      currentDateKey = shiftDateKey(targetDateKey, step.dayOffset || 0);
-      currentMinutes = timeToMinutes(step.anchorTime || '09:00');
-    } else {
-      if (index > 0) {
-        currentMinutes += (step.gapMinutes || 0);
-      }
+      currentAbs = (step.dayOffset || 0) * MINUTES_PER_DAY + timeToMinutes(step.anchorTime || '09:00');
+    } else if (index > 0) {
+      currentAbs += (step.gapMinutes || 0);
     }
 
-    const startMin = currentMinutes;
-    const endMin = currentMinutes + step.durationMinutes;
-    currentMinutes = endMin;
+    const placed = placeAtAbsoluteMinute(targetDateKey, currentAbs, step.durationMinutes, true);
+    currentAbs = placed.absStart + step.durationMinutes;
 
     const event = {
       id: generateId('evt_step'),
       title: step.title,
-      dateKey: currentDateKey,
-      startTime: minutesToTime(startMin),
-      endTime: minutesToTime(endMin),
+      dateKey: placed.dateKey,
+      startTime: placed.startTime,
+      endTime: placed.endTime,
       color: protocolColor, // Unified protocol color scheme
       category: 'Protocol',
       stepType: step.stepType || 'active',
@@ -301,33 +384,29 @@ export function instantiateProtocol(protocol, targetDateKey, targetStartMinutes)
 /**
  * Shift entire protocol group by deltaDays and deltaMinutes (Shift + Drag)
  */
+// Move one event by days + minutes, rolling across midnight instead of clamping to the same day
+function shiftEventBy(evt, deltaDays, deltaMinutes) {
+  const startMin = timeToMinutes(evt.startTime);
+  const duration = timeToMinutes(evt.endTime) - startMin;
+  const placed = placeAtAbsoluteMinute(evt.dateKey, deltaDays * MINUTES_PER_DAY + startMin + deltaMinutes, duration);
+  return {
+    ...evt,
+    dateKey: placed.dateKey,
+    startTime: placed.startTime,
+    endTime: placed.endTime
+  };
+}
+
 export function shiftProtocolGroup(allEvents, protocolGroupId, deltaDays, deltaMinutes) {
-  return allEvents.map((evt) => {
-    if (evt.protocolGroupId !== protocolGroupId) {
-      return evt;
-    }
-
-    const newDateKey = shiftDateKey(evt.dateKey, deltaDays);
-    const startMin = timeToMinutes(evt.startTime);
-    const endMin = timeToMinutes(evt.endTime);
-    const duration = endMin - startMin;
-
-    const newStartMin = Math.max(0, Math.min(1440 - duration, startMin + deltaMinutes));
-    const newEndMin = newStartMin + duration;
-
-    return {
-      ...evt,
-      dateKey: newDateKey,
-      startTime: minutesToTime(newStartMin),
-      endTime: minutesToTime(newEndMin)
-    };
-  });
+  return allEvents.map((evt) => (
+    evt.protocolGroupId === protocolGroupId ? shiftEventBy(evt, deltaDays, deltaMinutes) : evt
+  ));
 }
 
 /**
  * Cascade Shift: Shift selected step and push downstream steps by the delta, preserving subsequent gaps! (Ctrl / Cmd + Drag)
  */
-export function cascadeShiftProtocolSteps(allEvents, protocolGroupId, targetStepId, deltaDays, deltaMinutes) {
+export function cascadeShiftProtocolSteps(allEvents, protocolGroupId, targetStepId, deltaDays, deltaMinutes, includeTarget = true) {
   const groupSteps = allEvents
     .filter((e) => e.protocolGroupId === protocolGroupId)
     .sort((a, b) => {
@@ -338,28 +417,11 @@ export function cascadeShiftProtocolSteps(allEvents, protocolGroupId, targetStep
   const targetIdx = groupSteps.findIndex((e) => e.id === targetStepId);
   if (targetIdx === -1) return allEvents;
 
-  const downstreamIds = new Set(groupSteps.slice(targetIdx).map((e) => e.id));
+  const downstreamIds = new Set(groupSteps.slice(includeTarget ? targetIdx : targetIdx + 1).map((e) => e.id));
 
-  return allEvents.map((evt) => {
-    if (!downstreamIds.has(evt.id)) {
-      return evt;
-    }
-
-    const newDateKey = shiftDateKey(evt.dateKey, deltaDays);
-    const startMin = timeToMinutes(evt.startTime);
-    const endMin = timeToMinutes(evt.endTime);
-    const duration = endMin - startMin;
-
-    const newStartMin = Math.max(0, Math.min(1440 - duration, startMin + deltaMinutes));
-    const newEndMin = newStartMin + duration;
-
-    return {
-      ...evt,
-      dateKey: newDateKey,
-      startTime: minutesToTime(newStartMin),
-      endTime: minutesToTime(newEndMin)
-    };
-  });
+  return allEvents.map((evt) => (
+    downstreamIds.has(evt.id) ? shiftEventBy(evt, deltaDays, deltaMinutes) : evt
+  ));
 }
 
 /**

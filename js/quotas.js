@@ -59,7 +59,7 @@ export function calculateQuotaStats(quotas, events, referenceDate) {
     const hasMonthly = typeof quota.monthlyTarget === 'number' && quota.monthlyTarget > 0;
     const hasTotal = typeof quota.totalTarget === 'number' && quota.totalTarget > 0;
 
-    const weeklyTarget = hasWeekly ? quota.weeklyTarget : (quota.targetHours || 0);
+    const weeklyTarget = hasWeekly ? quota.weeklyTarget : (Number(quota.targetHours) || 0);
     const monthlyTarget = hasMonthly ? quota.monthlyTarget : 0;
     const totalTarget = hasTotal ? quota.totalTarget : 0;
 

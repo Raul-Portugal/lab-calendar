@@ -23,7 +23,14 @@
   </div>
 
   <script type="module">
-    import {
+    // Isolate the test suite from the real calendar: this key must be set BEFORE
+    // state.js / sync.js are loaded, so the modules are imported dynamically below.
+    const TEST_STORAGE_KEY = 'lab_calendar_test_suite_data';
+    window.__LABCAL_STORAGE_KEY__ = TEST_STORAGE_KEY;
+    localStorage.removeItem(TEST_STORAGE_KEY);
+    localStorage.removeItem(`${TEST_STORAGE_KEY}_cloud_config`);
+
+    const {
       formatDateKey,
       parseDateKey,
       shiftDateKey,
@@ -36,17 +43,17 @@
       getCategoryDefaultColor,
       calculateDaysBetween,
       escapeHtml
-    } from './js/utils.js';
-    import {
+    } = await import('./js/utils.js');
+    const {
       BUILT_IN_PROTOCOLS,
       instantiateProtocol,
       shiftProtocolGroup,
       cascadeShiftProtocolSteps,
       checkProtocolChainIntegrity
-    } from './js/protocols.js';
-    import { calculateQuotaStats, calculateWeeklyQuotaStats, DEFAULT_QUOTAS, getSuggestedQuotaDuration } from './js/quotas.js';
-    import { store } from './js/state.js';
-    import { encryptPayload, decryptPayload, SyncManager } from './js/sync.js';
+    } = await import('./js/protocols.js');
+    const { calculateQuotaStats, calculateWeeklyQuotaStats, DEFAULT_QUOTAS, getSuggestedQuotaDuration } = await import('./js/quotas.js');
+    const { store } = await import('./js/state.js');
+    const { encryptPayload, decryptPayload, SyncManager } = await import('./js/sync.js');
 
     const resultsEl = document.getElementById('results');
     const summaryEl = document.getElementById('summary');
@@ -291,7 +298,8 @@
       // 17. calculateDaysBetween & escapeHtml Helpers
       assert(calculateDaysBetween('2026-10-12', '2026-10-15') === 3, 'calculateDaysBetween("2026-10-12", "2026-10-15") === 3');
       assert(calculateDaysBetween('2026-10-12', '2026-10-12') === 0, 'calculateDaysBetween same day === 0');
-      assert(escapeHtml('<script>alert("x")&</script>') === '&lt;script&gt;alert(&quot;x&quot;)&amp;&lt;/script&gt;', 'escapeHtml sanitizes HTML entities safely');
+      // Note: '<\/script>' must stay escaped, a literal closing tag would end this inline script
+      assert(escapeHtml('<script>alert("x")&<\/script>') === '&lt;script&gt;alert(&quot;x&quot;)&amp;&lt;/script&gt;', 'escapeHtml sanitizes HTML entities safely');
 
       // 18. Zero-Knowledge AES-GCM-256 E2EE Encryption & Decryption
       const testSecretPayload = {
@@ -334,15 +342,228 @@
       testSyncManager.setStatus('syncing', 'Sync in progress');
       assert(capturedStatus === 'syncing', 'SyncManager dispatches status change events to listeners');
 
+      // 20. Regression: test suite isolation & non-mutating expansion
+      assert(localStorage.getItem(TEST_STORAGE_KEY) !== null, 'Store persists to the isolated test storage key');
+      store.events = JSON.parse(JSON.stringify(instantiated.events));
+      const wbDay1Expanded = store.getExpandedEventsForRange(['2026-10-15']);
+      assert(wbDay1Expanded.some(e => e.derivedStepLabel === 'Step 1 of 10'), 'Expanded protocol steps carry derived step labels');
+      assert(store.events.every(e => e.derivedStepLabel === undefined && e.hasBrokenChainWarning === undefined), 'getExpandedEventsForRange does not mutate stored events');
+
+      // 21. Untrusted protocol import sanitization
+      const { sanitizeProtocol } = await import('./js/protocols.js');
+      const { safeColor } = await import('./js/utils.js');
+      const evilProto = sanitizeProtocol({
+        name: '<img src=x onerror=alert(1)>',
+        color: 'ocean" onmouseover="alert(1)',
+        steps: [{ title: 'Lysis', durationMinutes: '40', anchorType: 'bogus', stepType: '<b>', notes: 5, anchorTime: '"><svg>' }],
+        extraField: 'dropped'
+      });
+      assert(evilProto && evilProto.color === 'ocean', 'sanitizeProtocol restricts color to palette keys');
+      assert(evilProto.steps[0].durationMinutes === 40 && evilProto.steps[0].stepType === 'active' && evilProto.steps[0].anchorType === 'after-previous', 'sanitizeProtocol coerces numbers and enums');
+      assert(evilProto.steps[0].anchorTime === '09:00' && evilProto.steps[0].notes === '', 'sanitizeProtocol rejects malformed anchorTime / non-string notes');
+      assert(!('extraField' in evilProto), 'sanitizeProtocol drops unknown fields');
+      assert(sanitizeProtocol({ name: 'x', steps: 'nope' }) === null && sanitizeProtocol(null) === null, 'sanitizeProtocol rejects invalid files');
+      assert(safeColor('lavender') === 'lavender' && safeColor('__proto__') === 'ocean', 'safeColor only allows palette names');
+      assert(escapeHtml(0) === '0', 'escapeHtml keeps numeric zero');
+
+      // 22. Cloud sync: never silently discard data (mocked Supabase PostgREST)
+      const { isLocalDataChange } = await import('./js/state.js');
+      assert(!isLocalDataChange('hover_change') && !isLocalDataChange('date_change') && !isLocalDataChange('filter_change') && !isLocalDataChange('cloud_pull'), 'View-only and cloud notifications are not local data edits');
+      assert(isLocalDataChange('event_added') && isLocalDataChange('backup_import') && isLocalDataChange('undo'), 'Edits, backup imports and undo are local data edits');
+
+      const realFetch = window.fetch;
+      const fake = { row: null, calls: [], unauthorizedOnce: false, alwaysUnauthorized: false, beforePatch: null, clock: Date.parse('2026-10-01T00:00:00Z') };
+      const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+      window.fetch = async (url, opts = {}) => {
+        const u = new URL(url);
+        const method = opts.method || 'GET';
+        fake.calls.push(`${method} ${u.pathname}`);
+        if (u.pathname === '/auth/v1/token') {
+          if (fake.alwaysUnauthorized) return jsonRes(400, { msg: 'invalid refresh token' });
+          return jsonRes(200, { access_token: 'tok2', refresh_token: 'ref2' });
+        }
+        if (fake.alwaysUnauthorized || (fake.unauthorizedOnce && opts.headers?.Authorization === 'Bearer tok1')) {
+          fake.unauthorizedOnce = false;
+          return jsonRes(401, { message: 'JWT expired' });
+        }
+        const serverStamp = () => new Date(fake.clock += 1000).toISOString().replace('Z', '+00:00');
+        if (method === 'GET') return jsonRes(200, fake.row ? [{ updated_at: fake.row.updated_at, payload: fake.row.payload }] : []);
+        const body = JSON.parse(opts.body);
+        if (method === 'POST') {
+          if (fake.row) return jsonRes(409, { message: 'duplicate key' });
+          fake.row = { ...body, updated_at: serverStamp() };
+          return jsonRes(201, [fake.row]);
+        }
+        if (method === 'PATCH') {
+          if (fake.beforePatch) { const hook = fake.beforePatch; fake.beforePatch = null; hook(); }
+          const expected = decodeURIComponent(u.searchParams.get('updated_at').replace(/^eq\./, ''));
+          if (!fake.row || Date.parse(fake.row.updated_at) !== Date.parse(expected)) return jsonRes(200, []);
+          fake.row = { ...body, updated_at: serverStamp() };
+          return jsonRes(200, [fake.row]);
+        }
+        return jsonRes(400, {});
+      };
+      const otherDeviceWrites = (events) => {
+        fake.row = { ...fake.row, updated_at: new Date(fake.clock += 1000).toISOString(), payload: { isEncrypted: false, payload: { events } } };
+      };
+
+      try {
+        const sm = new SyncManager(store);
+        Object.assign(sm.config, { supabaseUrl: 'https://fake.supabase.co', supabaseAnonKey: 'anon', accessToken: 'tok1', refreshToken: 'ref1', userId: 'user-1', userEmail: 't@example.com', passphrase: '' });
+        let resolverCalls = 0;
+        let resolverAnswer = null;
+        sm.conflictResolver = async () => { resolverCalls++; return resolverAnswer; };
+
+        store.events = [{ id: 'local_a', title: 'Local A', dateKey: '2026-10-15', startTime: '09:00', endTime: '10:00' }];
+        await sm.syncNow();
+        assert(fake.row && sm.config.lastSyncedServerAt === fake.row.updated_at && sm.config.localDirty === false, 'Empty cloud: first sync inserts this device and records server updated_at');
+
+        fake.calls = [];
+        await sm.syncNow();
+        assert(!fake.calls.some(c => c.startsWith('PATCH')) && sm.status === 'synced', 'Nothing changed anywhere: sync does not push');
+
+        store.events.push({ id: 'local_b', title: 'Local B', dateKey: '2026-10-15', startTime: '11:00', endTime: '12:00' });
+        sm.markDirty();
+        await sm.syncNow();
+        assert(fake.row.payload.payload.events.length === 2 && sm.config.localDirty === false, 'Local edit, cloud unchanged: edit is pushed');
+
+        otherDeviceWrites([{ id: 'remote_x', title: 'From laptop', dateKey: '2026-10-16', startTime: '09:00', endTime: '10:00' }]);
+        await sm.syncNow();
+        assert(store.events.length === 1 && store.events[0].id === 'remote_x' && resolverCalls === 0, 'Cloud changed, no local edits: cloud version is applied without prompting');
+        store.undo();
+        assert(store.events.some(e => e.id === 'local_b'), 'Applying the cloud version can be undone');
+        store.redo();
+
+        otherDeviceWrites([{ id: 'remote_y', title: 'From phone', dateKey: '2026-10-17', startTime: '09:00', endTime: '10:00' }]);
+        store.events = [{ id: 'local_c', title: 'Unsynced local', dateKey: '2026-10-15', startTime: '09:00', endTime: '10:00' }];
+        sm.markDirty();
+        resolverAnswer = null;
+        await sm.syncNow();
+        assert(resolverCalls === 1 && sm.status === 'error' && store.events[0].id === 'local_c' && fake.row.payload.payload.events[0].id === 'remote_y', 'Both changed + "decide later": neither side is overwritten');
+
+        resolverAnswer = 'local';
+        await sm.syncNow();
+        assert(fake.row.payload.payload.events[0].id === 'local_c' && sm.config.localDirty === false, 'Conflict resolved with "keep this device": cloud gets local version');
+
+        otherDeviceWrites([{ id: 'remote_z', title: 'Tablet', dateKey: '2026-10-18', startTime: '09:00', endTime: '10:00' }]);
+        sm.markDirty();
+        resolverAnswer = 'cloud';
+        await sm.syncNow();
+        assert(store.events[0].id === 'remote_z' && sm.config.localDirty === false, 'Conflict resolved with "use cloud": local gets cloud version');
+
+        sm.markDirty();
+        fake.beforePatch = () => otherDeviceWrites([{ id: 'race', title: 'Race', dateKey: '2026-10-19', startTime: '09:00', endTime: '10:00' }]);
+        resolverAnswer = null;
+        const callsBefore = resolverCalls;
+        await sm.syncNow();
+        assert(fake.row.payload.payload.events[0].id === 'race' && resolverCalls === callsBefore + 1, 'Another device writing between pull and push is detected (conditional PATCH) and not overwritten');
+
+        resolverAnswer = 'cloud';
+        await sm.syncNow();
+        sm.config.accessToken = 'tok1';
+        fake.unauthorizedOnce = true;
+        sm.markDirty();
+        await sm.syncNow();
+        assert(sm.config.accessToken === 'tok2' && sm.status === 'synced', 'Expired access token is refreshed once and the request retried');
+
+        fake.alwaysUnauthorized = true;
+        fake.calls = [];
+        sm.markDirty();
+        await sm.syncNow();
+        assert(sm.status === 'error' && fake.calls.length <= 3, 'Persistent 401 fails cleanly instead of recursing forever');
+      } finally {
+        window.fetch = realFetch;
+      }
+
+      // 23. Categories: object-shaped add/update (used to throw TypeError)
+      store.categories = JSON.parse(JSON.stringify(store.categories));
+      assert(store.addCategory({ name: 'Imaging Core', color: 'cyan' }) === true && store.categories.some(c => c.name === 'Imaging Core' && c.color === 'cyan'), 'addCategory({ name, color }) adds the category');
+      assert(store.addCategory({ name: 'imaging core', color: 'ocean' }) === false, 'addCategory rejects case-insensitive duplicates');
+      store.events = [{ id: 'cat_evt', title: 'Confocal', category: 'Imaging Core', dateKey: '2026-10-15', startTime: '09:00', endTime: '10:00' }];
+      store.quotas = [{ id: 'cat_q', title: 'Imaging', weeklyTarget: 2, categories: ['Imaging Core'] }];
+      assert(store.updateCategory('Imaging Core', { name: 'Microscopy', color: 'amber' }) === true, 'updateCategory(oldName, { name, color }) succeeds');
+      assert(store.events[0].category === 'Microscopy' && store.quotas[0].categories[0] === 'Microscopy' && store.visibleCategories.has('Microscopy'), 'Category rename carries over to events, quotas and visibility');
+
+      // 24. Shared view filter
+      const { CalendarRenderer } = await import('./js/calendar.js');
+      const renderer = new CalendarRenderer(document.createElement('div'), store);
+      store.searchQuery = 'trizol';
+      assert(renderer.matchesFilters({ title: 'RNA prep', notes: 'Lyse in TRIzol' }) === true && renderer.matchesFilters({ title: 'RNA prep' }) === false, 'Search matches notes (in every view)');
+      store.searchQuery = '';
+      store.visibleCategories.delete('Microscopy');
+      assert(renderer.matchesFilters({ title: 'x', category: 'Microscopy' }) === false, 'Unchecked category is hidden');
+      assert(renderer.matchesFilters({ title: 'x', category: 'Deleted Category' }) === true, 'Events of a deleted category stay visible');
+      store.visibleCategories.add('Microscopy');
+
+      // 25. Protocols crossing midnight roll over instead of piling up at 23:59
+      const { placeAtAbsoluteMinute } = await import('./js/protocols.js');
+      const lateWb = instantiateProtocol(wbProto, '2026-10-15', 20 * 60);
+      const durationsKept = lateWb.events.every((e, i) => timeToMinutes(e.endTime) - timeToMinutes(e.startTime) === wbProto.steps[i].durationMinutes);
+      assert(durationsKept, 'Late protocol: every step keeps its full duration');
+      assert(lateWb.events[0].dateKey === '2026-10-15' && lateWb.events[2].dateKey === '2026-10-16', 'Late protocol: steps after midnight move to the next day');
+      assert(!lateWb.events.some(e => e.startTime === '23:59'), 'Late protocol: no steps collapsed at 23:59');
+      const lateShift = shiftProtocolGroup([{ id: 'l1', protocolGroupId: 'gl', dateKey: '2026-10-15', startTime: '22:30', endTime: '23:15' }], 'gl', 0, 90);
+      assert(lateShift[0].dateKey === '2026-10-16' && lateShift[0].startTime === '00:00' && lateShift[0].endTime === '00:45', 'Shifting past midnight moves the step to the next day');
+      const earlyShift = shiftProtocolGroup([{ id: 'e1', protocolGroupId: 'ge', dateKey: '2026-10-15', startTime: '00:30', endTime: '01:00' }], 'ge', 0, -60);
+      assert(earlyShift[0].dateKey === '2026-10-14' && earlyShift[0].startTime === '23:30', 'Shifting before midnight moves the step to the previous day');
+      assert(placeAtAbsoluteMinute('2026-10-15', 1430, 60).dateKey === '2026-10-16', 'placeAtAbsoluteMinute never lets an event cross midnight');
+
+      // 26. Ctrl+resize cascades only the steps AFTER the resized one
+      store.events = JSON.parse(JSON.stringify(instantiated.events));
+      const step3 = store.events[2];
+      const step3Start = step3.startTime;
+      const step4StartBefore = timeToMinutes(store.events[3].startTime);
+      store.resizeStepAndCascade(step3.id, { endTime: minutesToTime(timeToMinutes(step3.endTime) + 30) }, 30);
+      assert(store.events[2].startTime === step3Start, 'Resized step keeps its start time');
+      assert(timeToMinutes(store.events[3].startTime) === step4StartBefore + 30, 'Following step is pushed by the extra duration');
+
+      // 27. Recurring series fixes
+      store.series = [{ id: 's_wed', title: 'Lab Meeting', rule: { freq: 'WEEKLY', byDay: ['WE'] }, startTime: '09:30', endTime: '11:00', from: '2026-10-01', until: null, color: 'emerald', category: 'Meeting' }];
+      store.exceptions = [];
+      assert(store.findSeries('s_we') === null, 'findSeries does not match id prefixes');
+      store.modifySeriesOccurrence('s_wed', '2026-10-14', { dateKey: '2026-10-22', startTime: '14:00', endTime: '15:00' }, 'this');
+      const nextWeek = store.getExpandedEventsForRange(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']);
+      assert(nextWeek.some(e => e.dateKey === '2026-10-22' && e.startTime === '14:00'), 'Occurrence moved into another week is shown in that week');
+      const occ = store.buildSeriesOccurrence(store.series[0], '2026-10-14');
+      assert(occ.startTime === '14:00' && occ.isException === true, 'buildSeriesOccurrence returns the edited times of a modified occurrence');
+      store.modifySeriesOccurrence('s_wed', '2026-10-07', { dateKey: '2026-10-08', title: 'Lab Meeting', startTime: '09:30', endTime: '11:00' }, 'all');
+      assert(store.series[0].rule.byDay.join() === 'TH' && store.series[0].dateKey === undefined, 'Moving "all occurrences" by a day shifts the weekday rule');
+
+      // 28. Month navigation does not skip short months
+      store.currentView = 'month';
+      store.currentDate = new Date(2026, 0, 31);
+      store.navigate(1);
+      assert(store.currentDate.getMonth() === 1 && store.currentDate.getDate() === 28, 'Next month from Jan 31 is Feb 28 (not March 3)');
+      store.currentView = 'week';
+
+      // 29. ICS exceptions, floating UNTIL, byte-based folding
+      const { buildIcsContent } = await import('./js/storage.js');
+      const ics = buildIcsContent([], [{ id: 'sx', title: 'Seminar', rule: { freq: 'WEEKLY', byDay: ['FR'] }, startTime: '15:00', endTime: '16:00', from: '2026-10-01', until: '2026-12-31' }], [
+        { seriesId: 'sx', occurrenceDate: '2026-10-09', type: 'cancelled' },
+        { seriesId: 'sx', occurrenceDate: '2026-10-16', type: 'modified', override: { startTime: '16:00', endTime: '17:00' } }
+      ]);
+      assert(ics.includes('EXDATE:20261009T150000'), 'ICS: cancelled occurrence exported as EXDATE');
+      assert(ics.includes('RECURRENCE-ID:20261016T150000') && ics.includes('DTSTART:20261016T160000'), 'ICS: modified occurrence exported as RECURRENCE-ID override');
+      assert(ics.includes('UNTIL=20261231T235959\r\n') || ics.includes('UNTIL=20261231T235959'), 'ICS: UNTIL is floating like DTSTART');
+      assert(!ics.includes('T235959Z'), 'ICS: no UTC UNTIL with floating DTSTART');
+      assert(ics.includes('DTSTART:20261002T150000'), 'ICS: DTSTART is the first real occurrence (Fri Oct 2), not the range start');
+      const multiByte = 'DESCRIPTION:' + 'Add 5 µL at 4°C. '.repeat(10);
+      const foldedMb = foldIcsLine(multiByte).split('\r\n');
+      const enc = new TextEncoder();
+      assert(foldedMb.every(l => enc.encode(l).length <= 75), 'ICS folding limits lines to 75 octets with µ / ° characters');
+      assert(foldedMb.map((l, i) => i === 0 ? l : l.slice(1)).join('') === multiByte, 'ICS folding round-trips multi-byte text');
+
       summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
       summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
       window.__TESTS_PASSED__ = (failed === 0);
-      localStorage.removeItem('lab_calendar_data_v2');
     } catch (e) {
       summaryEl.textContent = `Error in test suite: ${e.message}`;
       summaryEl.style.color = '#c5221f';
       console.error(e);
       window.__TESTS_PASSED__ = false;
+    } finally {
+      localStorage.removeItem(TEST_STORAGE_KEY);
+      localStorage.removeItem(`${TEST_STORAGE_KEY}_cloud_config`);
     }
   </script>
 </body>

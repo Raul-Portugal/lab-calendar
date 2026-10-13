@@ -261,24 +261,38 @@ export function getPaletteColor(name) {
   return PALETTE[name] || PALETTE.ocean;
 }
 
+// Restrict a color name to known palette keys (it is interpolated into class names and CSS vars)
+export function safeColor(name, fallback = 'ocean') {
+  return Object.prototype.hasOwnProperty.call(PALETTE, name) ? name : fallback;
+}
+
 /**
  * RFC 5545 Line Folding Helper (Folds at 75 octets with CRLF + space)
  */
 export function foldIcsLine(line) {
-  if (line.length <= 75) return line;
+  const encoder = new TextEncoder();
+  if (encoder.encode(line).length <= 75) return line;
 
+  // Count UTF-8 bytes, never splitting a multi-byte character (µ, °, emoji...)
   const parts = [];
-  let remaining = line;
+  let current = '';
+  let currentBytes = 0;
+  let limit = 75; // continuation lines: 1 space + 74 octets
 
-  parts.push(remaining.slice(0, 75));
-  remaining = remaining.slice(75);
-
-  while (remaining.length > 0) {
-    parts.push(' ' + remaining.slice(0, 74));
-    remaining = remaining.slice(74);
+  for (const char of line) {
+    const charBytes = encoder.encode(char).length;
+    if (currentBytes + charBytes > limit) {
+      parts.push(current);
+      current = '';
+      currentBytes = 0;
+      limit = 74;
+    }
+    current += char;
+    currentBytes += charBytes;
   }
+  parts.push(current);
 
-  return parts.join('\r\n');
+  return parts.map((part, i) => (i === 0 ? part : ' ' + part)).join('\r\n');
 }
 
 // Calculate whole days between two date keys (YYYY-MM-DD)
@@ -290,9 +304,14 @@ export function calculateDaysBetween(startDateKey, endDateKey) {
   return Math.round(diffTime / (1000 * 60 * 60 * 24));
 }
 
+// Phone-sized layout (matches the breakpoint in css/responsive.css)
+export function isSmallScreen() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)').matches;
+}
+
 // Escape HTML special characters for safe innerHTML injection
 export function escapeHtml(str) {
-  if (!str) return '';
+  if (str === null || str === undefined || str === '') return '';
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

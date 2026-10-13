@@ -50,6 +50,8 @@ LabCal operates **local-first** by default. To sync seamlessly across all your d
    - *(Optional & Recommended for Research)*: Enter an **Encryption Passphrase** to activate **Zero-Knowledge Client-Side Encryption (AES-GCM-256)**. All protocols, notes, and events are encrypted in your browser before transmission.
 3. Sign in or create an account with your email. Your calendar will now automatically synchronize across your phone, tablet, lab workstation, and home laptop!
 
+**How conflicts are handled:** sync never silently throws data away. If only the cloud changed, this device takes the cloud version; if only this device changed, it is uploaded. If **both** changed since the last sync (e.g. you edited offline on your laptop and on your phone), LabCal asks which version to keep and offers to download a backup of this device first. Taking the cloud version can be undone with <kbd>Ctrl</kbd> + <kbd>Z</kbd>. The first time a device connects to a cloud that already has data, you will be asked once which version to keep.
+
 ---
 
 ## 🌐 Free Public Web Hosting (Deploy to the Web)
@@ -92,3 +94,20 @@ To access LabCal from anywhere on HTTPS:
 | **Undo** | <kbd>Ctrl</kbd> + <kbd>Z</kbd> |
 | **Redo** | <kbd>Ctrl</kbd> + <kbd>Y</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> |
 | **Search** | Top search bar filters by title, protocol name, or bench notes |
+
+### Phones & tablets (touch)
+
+| Action | Gesture |
+| :--- | :--- |
+| **Scroll** | Swipe as usual |
+| **Create event** | Long-press an empty time slot, drag to set the duration, release |
+| **Move event** | Long-press the event, then drag it |
+| **Event menu** (split, duplicate, protocol shift/cascade, delete) | Long-press the event and release without moving |
+| **Place a protocol / goal / quick event** | Tap it in the sidebar, then tap a time slot (tap it again to cancel) |
+| **All-day event (month view)** | Tap a day |
+
+---
+
+## 🧪 Running the Tests
+
+Start the local server and open `http://127.0.0.1:8000/test.html`. The suite runs in the browser against an isolated storage key, so it never touches your real calendar data. Cloud sync is tested against a mocked Supabase API (no network calls).

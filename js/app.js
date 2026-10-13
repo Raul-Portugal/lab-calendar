@@ -4,13 +4,14 @@
  * and Series + Exceptions Prompting
  */
 
-import { store } from './state.js';
+import { store, isLocalDataChange } from './state.js';
 import { CalendarRenderer } from './calendar.js';
 import { DragDropController } from './drag-drop.js';
 import { ProtocolBuilder } from './protocol-builder.js';
 import { calculateQuotaStats } from './quotas.js';
 import { exportToIcs, exportStateToJson, exportSingleProtocol } from './storage.js';
 import { SyncManager, SUPABASE_SETUP_SQL } from './sync.js';
+import { sanitizeProtocol } from './protocols.js';
 import {
   formatDateKey,
   getWeekDates,
@@ -21,7 +22,10 @@ import {
   minutesToTime,
   generateId,
   parseDateKey,
-  getCategoryDefaultColor
+  getCategoryDefaultColor,
+  escapeHtml,
+  safeColor,
+  isSmallScreen
 } from './utils.js';
 
 class LabCalendarApp {
@@ -36,6 +40,7 @@ class LabCalendarApp {
     this.initEventListeners();
     this.initMiniCalendar();
     this.initCloudSyncModal();
+    this.initSyncConflictModal();
     this.initPwa();
 
     // Subscribe to state changes for automatic UI re-renders
@@ -139,6 +144,21 @@ class LabCalendarApp {
       this.sidebarEl.classList.toggle('collapsed');
     });
 
+    // Phones: start on the day view with the sidebar hidden (it slides over the calendar)
+    if (isSmallScreen()) {
+      this.sidebarEl?.classList.add('collapsed');
+      store.currentView = 'day';
+      this.viewBtns.forEach((b) => b.classList.toggle('active', b.dataset.view === 'day'));
+    }
+
+    // Phones: tapping outside the open sidebar closes it
+    document.addEventListener('pointerdown', (e) => {
+      if (!isSmallScreen() || !this.sidebarEl || this.sidebarEl.classList.contains('collapsed')) return;
+      if (this.sidebarEl.contains(e.target) || this.sidebarToggleBtn?.contains(e.target)) return;
+      if (e.target.closest('.modal-backdrop')) return;
+      this.sidebarEl.classList.add('collapsed');
+    });
+
     // Date navigation
     this.todayBtn?.addEventListener('click', () => store.navigate(0));
     this.prevBtn?.addEventListener('click', () => store.navigate(-1));
@@ -209,7 +229,7 @@ class LabCalendarApp {
 
     // Direct 1-Click GCal export button
     this.directGcalBtn?.addEventListener('click', () => {
-      exportToIcs(store.events, store.series);
+      exportToIcs(store.events, store.series, store.exceptions);
       this.showToast('Downloaded lab_calendar.ics! In Google Calendar: Settings -> Import & export -> Import this file.');
     });
 
@@ -221,22 +241,13 @@ class LabCalendarApp {
 
     this.exportIcsBtn?.addEventListener('click', () => {
       this.exportDropdown.classList.add('hidden');
-      exportToIcs(store.events, store.series);
+      exportToIcs(store.events, store.series, store.exceptions);
       this.showToast('Exported RFC 5545 iCalendar (.ics) with recurring rules.');
     });
 
     this.exportJsonBtn?.addEventListener('click', () => {
       this.exportDropdown.classList.add('hidden');
-      exportStateToJson({
-        series: store.series,
-        exceptions: store.exceptions,
-        events: store.events,
-        quotas: store.quotas,
-        customProtocols: store.customProtocols,
-        quickClasses: store.quickClasses,
-        categories: store.categories,
-        settings: store.settings
-      });
+      this.exportBackup();
       this.showToast('Exported backup (.json)');
     });
 
@@ -251,20 +262,26 @@ class LabCalendarApp {
 
       const reader = new FileReader();
       reader.onload = (event) => {
+        let parsed;
         try {
-          const parsed = JSON.parse(event.target.result);
-          if (parsed.series) store.series = parsed.series;
-          if (parsed.exceptions) store.exceptions = parsed.exceptions;
-          if (parsed.events) store.events = parsed.events;
-          if (parsed.quotas) store.quotas = parsed.quotas;
-          if (parsed.customProtocols) store.customProtocols = parsed.customProtocols;
-          if (parsed.quickClasses) store.quickClasses = parsed.quickClasses;
-          if (parsed.categories) store.categories = parsed.categories;
-          store.notify('import');
-          this.showToast('Calendar restored successfully!');
+          parsed = JSON.parse(event.target.result);
         } catch (err) {
           alert('Invalid backup JSON file.');
+          return;
         }
+        const hasCalendarData = parsed && typeof parsed === 'object' &&
+          ['events', 'series', 'quotas', 'customProtocols', 'categories'].some((k) => Array.isArray(parsed[k]));
+        if (!hasCalendarData) {
+          alert('This file does not look like a LabCal backup.');
+          return;
+        }
+        if (!confirm('Replace the current calendar with this backup? You can undo with Ctrl+Z.')) return;
+
+        // Undoable, and synced to the cloud like any other edit
+        store.pushHistorySnapshot('Import backup');
+        store.applyData(parsed);
+        store.notify('backup_import');
+        this.showToast('Calendar restored successfully!');
       };
       reader.readAsText(file);
       e.target.value = '';
@@ -278,8 +295,8 @@ class LabCalendarApp {
       const reader = new FileReader();
       reader.onload = (event) => {
         try {
-          const parsed = JSON.parse(event.target.result);
-          if (parsed.name && parsed.steps) {
+          const parsed = sanitizeProtocol(JSON.parse(event.target.result));
+          if (parsed) {
             parsed.id = generateId('proto_shared');
             store.addCustomProtocol(parsed);
             this.showToast(`Imported protocol "${parsed.name}"!`);
@@ -308,6 +325,10 @@ class LabCalendarApp {
   }
 
   onStateChanged(changeType) {
+    if (changeType === 'date_change') {
+      // Keep the mini calendar on the month being viewed
+      this.miniDate = new Date(store.currentDate);
+    }
     this.renderHeaderTitle();
     this.calendar.render();
     this.renderSidebarQuotas();
@@ -316,8 +337,9 @@ class LabCalendarApp {
     this.renderCategoryFilters();
     this.renderMiniCalendar();
 
-    // Trigger debounced cloud auto-sync if not an external import
-    if (changeType !== 'import') {
+    // Only real local data edits are marked unsynced and pushed (not navigation, hover, filters or cloud pulls)
+    if (isLocalDataChange(changeType)) {
+      this.syncManager.markDirty();
       this.syncManager.scheduleAutoSync();
     }
   }
@@ -378,7 +400,7 @@ class LabCalendarApp {
 
       const categoriesHtml = (quota.categories && quota.categories.length > 0)
         ? `<div class="quota-categories-tags">
-            ${quota.categories.map((c) => `<span class="quota-category-tag">${c}</span>`).join('')}
+            ${quota.categories.map((c) => `<span class="quota-category-tag">${escapeHtml(c)}</span>`).join('')}
            </div>`
         : '';
 
@@ -436,8 +458,8 @@ class LabCalendarApp {
       card.innerHTML = `
         <div class="quota-card-top">
           <div class="quota-card-title">
-            <span class="chip-color-dot" style="background:var(--color-${quota.color || 'lavender'}-border);"></span>
-            <span>${quota.title}</span>
+            <span class="chip-color-dot" style="background:var(--color-${safeColor(quota.color, 'lavender')}-border);"></span>
+            <span>${escapeHtml(quota.title)}</span>
           </div>
           <div style="display:flex; align-items:center; gap:4px;">
             <div class="quota-actions">
@@ -487,8 +509,8 @@ class LabCalendarApp {
       chip.title = `Drag onto calendar to schedule ${cls.title} (${cls.duration}m)`;
 
       chip.innerHTML = `
-        <span class="chip-color-dot" style="background:var(--color-${cls.color || 'ocean'}-border, #1967d2);"></span>
-        <span>${cls.title} (${cls.duration}m)</span>
+        <span class="chip-color-dot" style="background:var(--color-${safeColor(cls.color)}-border, #1967d2);"></span>
+        <span>${escapeHtml(cls.title)} (${escapeHtml(cls.duration)}m)</span>
         <span class="chip-actions">
           <button class="chip-btn edit-chip-btn" title="Edit class">✎</button>
           <button class="chip-btn delete-chip-btn" title="Delete class">✕</button>
@@ -531,16 +553,16 @@ class LabCalendarApp {
 
       card.innerHTML = `
         <div class="protocol-card-header">
-          <div class="protocol-card-name">${proto.name}</div>
+          <div class="protocol-card-name">${escapeHtml(proto.name)}</div>
           <div class="protocol-card-actions">
-            <span class="protocol-days-badge">${daysLabel}</span>
+            <span class="protocol-days-badge">${escapeHtml(daysLabel)}</span>
             <button class="protocol-action-btn edit-proto-btn" title="Edit Protocol">✎</button>
             <button class="protocol-action-btn share-btn" title="Export / Share .protocol.json">⤓</button>
             <button class="protocol-action-btn delete-proto-btn" title="Delete Protocol" style="color:var(--google-red);">🗑</button>
           </div>
         </div>
         <div class="protocol-card-meta">
-          <span>${proto.steps.length} steps • ${proto.category || 'Protocol'}</span>
+          <span>${proto.steps.length} steps • ${escapeHtml(proto.category || 'Protocol')}</span>
           ${isCustom ? `<span style="color:var(--google-blue); font-weight:600;"> (Custom)</span>` : ''}
         </div>
       `;
@@ -587,8 +609,8 @@ class LabCalendarApp {
       label.innerHTML = `
         <div class="filter-left">
           <input type="checkbox" class="filter-checkbox" ${isVisible ? 'checked' : ''}>
-          <span class="chip-color-dot" style="background:var(--color-${cat.color || 'ocean'}-border, #1967d2);"></span>
-          <span>${cat.name}</span>
+          <span class="chip-color-dot" style="background:var(--color-${safeColor(cat.color)}-border, #1967d2);"></span>
+          <span>${escapeHtml(cat.name)}</span>
         </div>
         <div class="filter-actions">
           <button class="filter-action-btn edit-cat-btn" title="Edit Category">✎</button>
@@ -664,8 +686,11 @@ class LabCalendarApp {
     const startDayIndex = (firstDayOfMonth.getDay() + 6) % 7;
     const startDate = new Date(year, month, 1 - startDayIndex);
     const today = new Date();
+    // 5 or 6 week rows, same as the month view (a fixed 35 cells cut off e.g. March 2026)
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const totalCells = (startDayIndex + daysInMonth > 35) ? 42 : 35;
 
-    for (let i = 0; i < 35; i++) {
+    for (let i = 0; i < totalCells; i++) {
       const cellDate = new Date(startDate);
       cellDate.setDate(startDate.getDate() + i);
 
@@ -686,12 +711,13 @@ class LabCalendarApp {
 
     this.miniCalendarWidget.appendChild(grid);
 
+    // Day 1 avoids month overflow (e.g. Jan 31 + 1 month would land in March)
     header.querySelector('#miniPrevBtn').addEventListener('click', () => {
-      this.miniDate.setMonth(this.miniDate.getMonth() - 1);
+      this.miniDate = new Date(year, month - 1, 1);
       this.renderMiniCalendar();
     });
     header.querySelector('#miniNextBtn').addEventListener('click', () => {
-      this.miniDate.setMonth(this.miniDate.getMonth() + 1);
+      this.miniDate = new Date(year, month + 1, 1);
       this.renderMiniCalendar();
     });
   }
@@ -836,7 +862,7 @@ class LabCalendarApp {
       if (event.isChained && event.protocolName) {
         this.protocolInfoBanner.innerHTML = `
           <div style="background:var(--google-blue-light); padding:8px 12px; border-radius:6px; font-size:12px; color:var(--google-blue); font-weight:500;">
-            🔗 Part of chained protocol: <strong>${event.protocolName}</strong> (${event.derivedStepLabel || 'Step'})
+            🔗 Part of chained protocol: <strong>${escapeHtml(event.protocolName)}</strong> (${escapeHtml(event.derivedStepLabel || 'Step')})
             <br><span style="font-size:11px; opacity:0.85;">Hold Shift while dragging to move all steps; Ctrl to cascade downstream.</span>
           </div>
         `;
@@ -1103,8 +1129,8 @@ class LabCalendarApp {
       label.style.cursor = 'pointer';
 
       label.innerHTML = `
-        <input type="checkbox" value="${cat.name}" ${linked.has(cat.name) ? 'checked' : ''} style="accent-color:var(--google-blue);">
-        <span>${cat.name}</span>
+        <input type="checkbox" value="${escapeHtml(cat.name)}" ${linked.has(cat.name) ? 'checked' : ''} style="accent-color:var(--google-blue);">
+        <span>${escapeHtml(cat.name)}</span>
       `;
       this.quotaCategoriesCheckboxes.appendChild(label);
     });
@@ -1230,13 +1256,14 @@ class LabCalendarApp {
       const color = this.categoryColorSelect.value || 'ocean';
       const oldName = this.categoryEditOldNameInput.value;
 
-      if (oldName) {
-        store.updateCategory(oldName, { name, color });
-        this.showToast(`Updated category "${name}"`);
-      } else {
-        store.addCategory({ name, color });
-        this.showToast(`Added category "${name}"`);
+      const saved = oldName
+        ? store.updateCategory(oldName, { name, color })
+        : store.addCategory({ name, color });
+      if (!saved) {
+        alert(`A category named "${name}" already exists.`);
+        return;
       }
+      this.showToast(oldName ? `Updated category "${name}"` : `Added category "${name}"`);
 
       this.closeCategoryModal();
     });
@@ -1444,11 +1471,11 @@ class LabCalendarApp {
 
     // Manual Sync
     const handleSync = async () => {
-      try {
-        await this.syncManager.syncNow();
+      await this.syncManager.syncNow();
+      if (this.syncManager.status === 'synced') {
         this.showToast('Synchronized with cloud!');
-      } catch (err) {
-        alert(`Sync failed: ${err.message}`);
+      } else if (this.syncManager.status === 'error') {
+        this.showToast(`Sync: ${this.syncManager.statusDetails}`);
       }
     };
     this.syncNowBtn?.addEventListener('click', handleSync);
@@ -1460,6 +1487,11 @@ class LabCalendarApp {
       const key = (this.syncAnonKeyInput.value || '').trim();
       const pass = (this.syncPassphraseInput.value || '').trim();
 
+      if (this.syncManager.formatBaseUrl(url) !== this.syncManager.formatBaseUrl(this.syncManager.config.supabaseUrl)) {
+        // Different project: this device has never synced with it
+        this.syncManager.config.lastSyncedServerAt = null;
+        this.syncManager.config.localDirty = true;
+      }
       this.syncManager.config.supabaseUrl = url;
       this.syncManager.config.supabaseAnonKey = key;
       this.syncManager.config.passphrase = pass;
@@ -1546,6 +1578,53 @@ class LabCalendarApp {
 
   closeCloudSyncModal() {
     this.cloudSyncModal?.classList.add('hidden');
+  }
+
+  exportBackup() {
+    exportStateToJson({
+      series: store.series,
+      exceptions: store.exceptions,
+      events: store.events,
+      quotas: store.quotas,
+      customProtocols: store.customProtocols,
+      deletedProtocolIds: Array.from(store.deletedProtocolIds),
+      quickClasses: store.quickClasses,
+      categories: store.categories,
+      settings: {
+        use24Hour: store.settings.use24Hour,
+        visibleCategories: Array.from(store.visibleCategories)
+      }
+    });
+  }
+
+  /**
+   * Ask which version wins when both this device and the cloud changed.
+   * Resolves to 'local', 'cloud' or null (decide later).
+   */
+  initSyncConflictModal() {
+    const modal = document.getElementById('syncConflictModal');
+    const localBtn = document.getElementById('syncConflictLocalBtn');
+    const cloudBtn = document.getElementById('syncConflictCloudBtn');
+    const cancelBtn = document.getElementById('syncConflictCancelBtn');
+    const backupBtn = document.getElementById('syncConflictBackupBtn');
+    if (!modal) return;
+
+    backupBtn?.addEventListener('click', () => {
+      this.exportBackup();
+      this.showToast('Downloaded a backup of this device.');
+    });
+
+    this.syncManager.conflictResolver = () => new Promise((resolve) => {
+      const finish = (choice) => {
+        modal.classList.add('hidden');
+        localBtn.onclick = cloudBtn.onclick = cancelBtn.onclick = null;
+        resolve(choice);
+      };
+      localBtn.onclick = () => finish('local');
+      cloudBtn.onclick = () => finish('cloud');
+      cancelBtn.onclick = () => finish(null);
+      modal.classList.remove('hidden');
+    });
   }
 
   showToast(message) {

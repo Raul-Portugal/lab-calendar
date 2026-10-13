@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="css/calendar.css">
   <link rel="stylesheet" href="css/sidebar.css">
   <link rel="stylesheet" href="css/modal.css">
+  <link rel="stylesheet" href="css/responsive.css">
 </head>
 <body>
   <!-- Top Application Header (Google Calendar Style) -->
@@ -529,6 +530,30 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" id="seriesPromptCancelBtn">Cancel</button>
         <button type="button" class="btn btn-primary" id="seriesPromptConfirmBtn">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cloud Sync Conflict Modal -->
+  <div class="modal-backdrop hidden" id="syncConflictModal">
+    <div class="modal-dialog" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Sync Conflict</h3>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--google-grey-800); margin-bottom: 8px;" id="syncConflictDescription">
+          The cloud copy was changed on another device, and this device also has changes that were not synced yet.
+          Which version do you want to keep? The other version will be replaced.
+        </p>
+        <p style="font-size: 12px; color: var(--google-grey-700);">
+          Tip: download a backup of this device first if you are unsure.
+        </p>
+      </div>
+      <div class="modal-footer" style="flex-wrap: wrap; gap: 8px;">
+        <button type="button" class="btn btn-outline" id="syncConflictBackupBtn">Download backup of this device</button>
+        <button type="button" class="btn btn-outline" id="syncConflictCancelBtn">Decide later</button>
+        <button type="button" class="btn btn-outline" id="syncConflictCloudBtn">Use cloud version</button>
+        <button type="button" class="btn btn-primary" id="syncConflictLocalBtn">Keep this device's version</button>
       </div>
     </div>
   </div>
