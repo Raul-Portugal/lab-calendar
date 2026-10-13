@@ -568,6 +568,10 @@
       store.currentDate = new Date(2026, 0, 31);
       store.navigate(1);
       assert(store.currentDate.getMonth() === 1 && store.currentDate.getDate() === 28, 'Next month from Jan 31 is Feb 28 (not March 3)');
+      store.setView('3day');
+      store.currentDate = new Date(2026, 9, 30);
+      store.navigate(1);
+      assert(store.currentView === '3day' && store.currentDate.getMonth() === 10 && store.currentDate.getDate() === 2, '3-day view moves 3 days at a time (Oct 30 -> Nov 2)');
       store.currentView = 'week';
 
       // 29. ICS exceptions, floating UNTIL, byte-based folding

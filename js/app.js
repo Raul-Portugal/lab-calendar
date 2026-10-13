@@ -148,11 +148,10 @@ class LabCalendarApp {
       this.sidebarEl.classList.toggle('collapsed');
     });
 
-    // Phones: start on the day view with the sidebar hidden (it slides over the calendar)
+    // Phones: start on the 3-day view with the sidebar hidden (it slides over the calendar)
     if (isSmallScreen()) {
       this.sidebarEl?.classList.add('collapsed');
-      store.currentView = 'day';
-      this.viewBtns.forEach((b) => b.classList.toggle('active', b.dataset.view === 'day'));
+      store.currentView = '3day';
     }
 
     // Phones: tapping outside the open sidebar closes it
@@ -360,7 +359,16 @@ class LabCalendarApp {
 
   renderHeaderTitle() {
     const cur = store.currentDate;
-    if (store.currentView === 'day') {
+    // Keep the view switcher in sync when the view changes programmatically
+    // (e.g. clicking a day header opens the day view)
+    this.viewBtns.forEach((b) => b.classList.toggle('active', b.dataset.view === store.currentView));
+
+    if (store.currentView === '3day') {
+      const end = parseDateKey(shiftDateKey(formatDateKey(cur), 2));
+      this.currentDateTitle.textContent = cur.getMonth() === end.getMonth()
+        ? `${MONTH_NAMES[cur.getMonth()]} ${cur.getDate()} – ${end.getDate()}, ${end.getFullYear()}`
+        : `${MONTH_NAMES[cur.getMonth()]} ${cur.getDate()} – ${MONTH_NAMES[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
+    } else if (store.currentView === 'day') {
       const dayName = cur.toLocaleDateString('en-US', { weekday: 'long' });
       this.currentDateTitle.textContent = `${dayName}, ${MONTH_NAMES[cur.getMonth()]} ${cur.getDate()}, ${cur.getFullYear()}`;
     } else if (store.currentView === 'month') {

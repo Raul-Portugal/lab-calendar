@@ -232,6 +232,8 @@ class StateStore {
       const d = new Date(this.currentDate);
       if (this.currentView === 'day') {
         d.setDate(d.getDate() + direction);
+      } else if (this.currentView === '3day') {
+        d.setDate(d.getDate() + direction * 3);
       } else if (this.currentView === 'week') {
         d.setDate(d.getDate() + (direction * 7));
       } else if (this.currentView === 'month') {
@@ -246,7 +248,7 @@ class StateStore {
   }
 
   setView(view) {
-    if (['week', 'day', 'month'].includes(view)) {
+    if (['week', '3day', 'day', 'month'].includes(view)) {
       this.currentView = view;
       this.notify('view_change');
     }

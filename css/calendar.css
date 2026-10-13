@@ -28,7 +28,7 @@
   z-index: 10;
   flex-shrink: 0;
   box-shadow: 0 1px 2px rgba(60,64,67,0.05);
-  padding-right: var(--scrollbar-width, 17px);
+  padding-right: var(--scrollbar-width, 0px);
 }
 
 .cal-header-gutter {
@@ -50,10 +50,12 @@
 .cal-day-headers {
   display: flex;
   flex: 1;
+  min-width: 0;
 }
 
 .cal-day-header {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -147,14 +149,19 @@
 .cal-day-columns {
   display: flex;
   flex: 1;
+  min-width: 0;
   position: relative;
 }
 
+/* Columns and headers share the same flexible sizing (no fixed minimum), so all days
+   stay visible and aligned at any width. Each column is a size container so event
+   cards can switch to a compact layout when the column is narrow. */
 .cal-day-column {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   position: relative;
   border-right: 1px solid var(--google-grey-200);
-  min-width: 100px;
+  container-type: inline-size;
 }
 .cal-day-column:last-child {
   border-right: none;
@@ -224,6 +231,62 @@
 .cal-event-card:hover {
   z-index: 20 !important;
   box-shadow: 0 4px 8px rgba(60,64,67,0.3);
+}
+
+.cal-day-column {
+  --passive-gutter: 26px;
+}
+
+.is-passive-step .event-card-inner {
+  padding-left: 28px;
+}
+
+/* Medium columns (3-day view on phones): badge goes under the title instead of squeezing it */
+@container (max-width: 160px) {
+  .cal-event-card .event-card-header {
+    flex-wrap: wrap;
+  }
+
+  .cal-event-card .event-title {
+    flex-basis: 100%;
+  }
+}
+
+/* Narrow columns (phones, week view in a small window): compact cards with the title only */
+@container (max-width: 90px) {
+  .cal-event-card {
+    --passive-gutter: 6px;
+    padding: 2px 3px;
+  }
+
+  .cal-event-card .event-time-row,
+  .cal-event-card .event-notes-preview,
+  .cal-event-card .protocol-shift-tip,
+  .cal-event-card .step-counter-badge,
+  .cal-event-card .event-continuation,
+  .cal-event-card .passive-left-strip {
+    display: none;
+  }
+
+  .cal-event-card .broken-chain-warning {
+    font-size: 0;
+  }
+
+  .cal-event-card .broken-chain-warning::before {
+    content: 'âš ï¸';
+    font-size: 10px;
+  }
+
+  .is-passive-step .event-card-inner {
+    padding-left: 0;
+  }
+
+  .cal-event-card .event-title {
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: normal;
+    word-break: break-word;
+  }
 }
 
 /* Overnight events: the parts continuing from / into another day have square edges */
@@ -640,7 +703,7 @@
   z-index: 9;
   flex-shrink: 0;
   min-height: 28px;
-  padding-right: var(--scrollbar-width, 17px);
+  padding-right: var(--scrollbar-width, 0px);
 }
 
 .cal-allday-gutter {

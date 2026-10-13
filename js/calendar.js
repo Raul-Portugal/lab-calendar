@@ -20,6 +20,7 @@ import {
   escapeHtml,
   safeColor,
   parseDateKey,
+  shiftDateKey,
   toAbsMinutes,
   getEventSpan,
   getEventDayRange,
@@ -46,6 +47,9 @@ export class CalendarRenderer {
       this.renderMonthView();
     } else if (this.store.currentView === 'day') {
       this.renderTimeGridView([this.store.currentDate]);
+    } else if (this.store.currentView === '3day') {
+      // Selected day and the two following days (default on phones)
+      this.renderTimeGridView([0, 1, 2].map((offset) => parseDateKey(shiftDateKey(formatDateKey(this.store.currentDate), offset))));
     } else {
       // Default: Week view (Mon to Sun)
       const weekDates = getWeekDates(this.store.currentDate);
@@ -119,7 +123,8 @@ export class CalendarRenderer {
 
     const allDayGrid = document.createElement('div');
     allDayGrid.className = 'cal-allday-grid';
-    allDayGrid.style.gridTemplateColumns = `repeat(${dates.length}, 1fr)`;
+    // minmax(0, 1fr): same widths as the day columns even when titles are long
+    allDayGrid.style.gridTemplateColumns = `repeat(${dates.length}, minmax(0, 1fr))`;
 
     // Filter all-day and multi-day events
     const allDayEvents = expandedEvents.filter((e) => isAllDayEvent(e) && this.matchesFilters(e));
@@ -202,12 +207,13 @@ export class CalendarRenderer {
 
     this.container.appendChild(gridWrapper);
 
-    // Restore scroll synchronously (no flash), then measure scrollbar width to align headers
+    // Restore scroll synchronously (no flash). The header and all-day rows are padded by the
+    // body's scrollbar width so their columns line up with the day columns; measured now
+    // (not in requestAnimationFrame, which may never run in a background tab). Touch devices
+    // have overlay scrollbars, so this is often 0.
     scrollContainer.scrollTop = this.preservedScrollTop ?? 8.5 * this.hourHeight;
-    requestAnimationFrame(() => {
-      const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
-      document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
-    });
+    const scrollbarWidth = scrollContainer.offsetWidth - scrollContainer.clientWidth;
+    document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
   }
 
   /**
@@ -293,10 +299,10 @@ export class CalendarRenderer {
         card.style.width = `calc(100% - 4px)`;
         card.style.zIndex = '5';
       } else if (overlapsPassive) {
-        // Leave 26px gap on the left so the underlying passive step remains clearly visible!
-        const gutter = 26;
-        card.style.left = `calc(${leftPercent}% + ${gutter + 2}px)`;
-        card.style.width = `calc(${colWidthPercent}% - ${gutter + 4}px)`;
+        // Leave a gap on the left so the underlying passive step remains visible
+        // (--passive-gutter shrinks in narrow columns, see calendar.css)
+        card.style.left = `calc(${leftPercent}% + var(--passive-gutter) + 2px)`;
+        card.style.width = `calc(${colWidthPercent}% - var(--passive-gutter) - 4px)`;
         card.style.zIndex = '15';
       } else {
         card.style.left = `calc(${leftPercent}% + 2px)`;
@@ -356,7 +362,7 @@ export class CalendarRenderer {
       card.innerHTML = `
         ${evt.segIsStart ? '<div class="resize-handle resize-handle-top" title="Drag to adjust start time"></div>' : ''}
         ${passiveRibbonHtml}
-        <div class="event-card-inner" style="${isPassive ? 'padding-left: 28px;' : ''}">
+        <div class="event-card-inner">
           ${continuesBeforeHtml}
           <div class="event-card-header">
             <div class="event-title" title="${escapeHtml(evt.title)}">${escapeHtml(evt.title)}</div>

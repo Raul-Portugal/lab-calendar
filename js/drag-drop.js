@@ -243,6 +243,27 @@ export class DragDropController {
       }
     });
 
+    // Touch: a quick horizontal swipe moves to the previous / next period.
+    // Touch events (not pointer events) because the browser cancels pointer events
+    // once it starts scrolling.
+    let swipeStart = null;
+    container.addEventListener('touchstart', (e) => {
+      swipeStart = e.touches.length === 1
+        ? { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() }
+        : null;
+    }, { passive: true });
+    container.addEventListener('touchend', (e) => {
+      if (!swipeStart || this.touchInteractionActive || this.pendingPlacement) return;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - swipeStart.x;
+      const dy = touch.clientY - swipeStart.y;
+      const quick = Date.now() - swipeStart.time < 700;
+      swipeStart = null;
+      if (quick && Math.abs(dx) > 60 && Math.abs(dx) > 1.5 * Math.abs(dy)) {
+        this.store.navigate(dx < 0 ? 1 : -1);
+      }
+    }, { passive: true });
+
     // Single-click on event to view/edit
     container.addEventListener('click', (e) => {
       if (Date.now() < this.suppressClicksUntil) return;
