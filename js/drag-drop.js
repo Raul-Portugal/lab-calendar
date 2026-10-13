@@ -8,7 +8,6 @@ import {
   snapToGrid,
   clamp,
   minutesToTime,
-  timeToMinutes,
   formatDateKey,
   parseDateKey,
   generateId,
@@ -16,8 +15,19 @@ import {
   formatTimeDisplay,
   getCategoryDefaultColor,
   escapeHtml,
-  isSmallScreen
+  isSmallScreen,
+  formatDuration,
+  toAbsMinutes,
+  fromAbsMinutes,
+  getEventSpan,
+  spanToFields,
+  MINUTES_PER_DAY
 } from './utils.js';
+
+// "+1h 30m" / "-45m"
+function formatSignedDuration(minutes) {
+  return `${minutes < 0 ? '-' : '+'}${formatDuration(Math.abs(minutes))}`;
+}
 import { instantiateProtocol } from './protocols.js';
 import { createEventFromQuota, calculateWeeklyQuotaStats, getSuggestedQuotaDuration } from './quotas.js';
 
@@ -197,14 +207,13 @@ export class DragDropController {
       this.showToast(`Allocated ${Math.round(duration / 60 * 10) / 10}h for "${quota.title}". Weekly progress updated.`);
     } else if (type === 'event_class') {
       const template = JSON.parse(payload);
-      const endMinute = Math.min(1440, startMinute + (template.duration || 60));
+      const startAbs = toAbsMinutes(dateKey, '00:00') + startMinute;
 
       const newEvt = {
         id: generateId('evt_class'),
         title: template.title,
-        dateKey: dateKey,
-        startTime: minutesToTime(startMinute),
-        endTime: minutesToTime(endMinute),
+        ...spanToFields(startAbs, startAbs + (template.duration || 60)),
+        isAllDay: false,
         color: template.color || 'ocean',
         category: template.category || 'Bench Work',
         notes: template.notes || ''
@@ -343,39 +352,47 @@ export class DragDropController {
     this.closeQuickCreatePopover();
 
     const colRect = dayCol.getBoundingClientRect();
-    const relativeY = startEvent.clientY - colRect.top;
-    const startMin = snapToGrid(clamp(relativeY, 0, 1410), 15);
-    const initialEndMin = Math.min(1440, startMin + 60);
+    const startMin = snapToGrid(clamp(startEvent.clientY - colRect.top, 0, 1425), 15);
+    const dayStartAbs = toAbsMinutes(dayCol.dataset.dateKey, '00:00');
+    const startAbs = dayStartAbs + startMin;
+    const initialEndAbs = startAbs + 60;
 
     const draftEl = document.createElement('div');
     draftEl.className = 'cal-draft-event';
     draftEl.style.top = `${startMin}px`;
-    draftEl.style.height = `${initialEndMin - startMin}px`;
     draftEl.innerHTML = `
-      <span class="draft-time-label">${formatTimeDisplay(minutesToTime(startMin))} – ${formatTimeDisplay(minutesToTime(initialEndMin))}</span>
+      <span class="draft-time-label"></span>
       <span class="draft-prompt-text">(Drag to adjust duration)</span>
     `;
     dayCol.appendChild(draftEl);
 
+    // The draft box covers its own day; the part after midnight is shown with the ghost box
+    const updateDraft = (endAbs) => {
+      draftEl.style.height = `${Math.min(endAbs, dayStartAbs + MINUTES_PER_DAY) - startAbs}px`;
+      draftEl.querySelector('.draft-time-label').textContent = this.formatSpanTimes(startAbs, endAbs);
+    };
+    updateDraft(initialEndAbs);
+
     this.draftContext = {
       dayCol,
-      dateKey: dayCol.dataset.dateKey,
-      startMin,
-      endMin: initialEndMin,
-      draftEl,
-      startY: startEvent.clientY
+      startAbs,
+      endAbs: initialEndAbs,
+      draftEl
     };
 
     const onMouseMove = (moveEvt) => {
       if (!this.draftContext) return;
-      const curRelativeY = moveEvt.clientY - colRect.top;
-      const curMin = snapToGrid(clamp(curRelativeY, 0, 1440), 15);
-      const newEndMin = Math.max(startMin + 15, curMin);
-      this.draftContext.endMin = newEndMin;
-      draftEl.style.height = `${newEndMin - startMin}px`;
-      const timeLbl = draftEl.querySelector('.draft-time-label');
-      if (timeLbl) {
-        timeLbl.textContent = `${formatTimeDisplay(minutesToTime(startMin))} – ${formatTimeDisplay(minutesToTime(newEndMin))}`;
+      // Dragging into a later day's column extends the event past midnight
+      const pointer = this.pointerToAbs(moveEvt.clientX, moveEvt.clientY);
+      if (!pointer) return;
+      const endAbs = Math.max(startAbs + 15, pointer.abs);
+      this.draftContext.endAbs = endAbs;
+      updateDraft(endAbs);
+      if (pointer.col !== dayCol && endAbs > dayStartAbs + MINUTES_PER_DAY) {
+        const colStart = toAbsMinutes(pointer.col.dataset.dateKey, '00:00');
+        this.updateGhostPreview(pointer.col, 0, endAbs - colStart, '', this.formatSpanTimes(startAbs, endAbs));
+      } else {
+        this.removeGhostPreview();
       }
     };
 
@@ -383,6 +400,7 @@ export class DragDropController {
       document.removeEventListener('pointermove', onMouseMove);
       document.removeEventListener('pointerup', onMouseUp);
       document.removeEventListener('pointercancel', onMouseUp);
+      this.removeGhostPreview();
 
       if (!this.draftContext) return;
       if (upEvt.type === 'pointercancel') {
@@ -435,16 +453,14 @@ export class DragDropController {
 
   openQuickCreatePopover(draftCtx) {
     if (!this.popoverEl) return;
-    const { dateKey, startMin, endMin, draftEl } = draftCtx;
+    const { startAbs, endAbs, draftEl } = draftCtx;
     const rect = draftEl.getBoundingClientRect();
 
-    const [y, m, d] = dateKey.split('-').map(Number);
-    const dateObj = new Date(y, m - 1, d);
+    const dateObj = parseDateKey(fromAbsMinutes(startAbs).dateKey);
     const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
     const monthName = dateObj.toLocaleDateString('en-US', { month: 'short' });
-    const timeLabel = `${dayName}, ${monthName} ${d} • ${formatTimeDisplay(minutesToTime(startMin))} – ${formatTimeDisplay(minutesToTime(endMin))}`;
     if (this.popoverTimeLabel) {
-      this.popoverTimeLabel.textContent = timeLabel;
+      this.popoverTimeLabel.textContent = `${dayName}, ${monthName} ${dateObj.getDate()} • ${this.formatSpanTimes(startAbs, endAbs)}`;
     }
 
     if (this.popoverCategorySelect) {
@@ -489,7 +505,7 @@ export class DragDropController {
 
   saveDraftEventFromPopover() {
     if (!this.draftContext) return;
-    const { dateKey, startMin, endMin } = this.draftContext;
+    const { startAbs, endAbs } = this.draftContext;
     const title = (this.popoverTitleInput?.value || '').trim() || 'New Event';
     const cat = this.popoverCategorySelect?.value || 'Bench Work';
     const color = getCategoryDefaultColor(cat);
@@ -497,9 +513,8 @@ export class DragDropController {
     const newEvt = {
       id: generateId('evt_user'),
       title,
-      dateKey,
-      startTime: minutesToTime(startMin),
-      endTime: minutesToTime(endMin),
+      ...spanToFields(startAbs, endAbs),
+      isAllDay: false,
       category: cat,
       color,
       notes: ''
@@ -516,7 +531,7 @@ export class DragDropController {
 
   moreOptionsFromPopover() {
     if (!this.draftContext) return;
-    const { dateKey, startMin, endMin } = this.draftContext;
+    const { startAbs, endAbs } = this.draftContext;
     const title = (this.popoverTitleInput?.value || '').trim();
     const cat = this.popoverCategorySelect?.value || 'Bench Work';
     const color = getCategoryDefaultColor(cat);
@@ -524,9 +539,8 @@ export class DragDropController {
     const draftData = {
       id: '',
       title,
-      dateKey,
-      startTime: minutesToTime(startMin),
-      endTime: minutesToTime(endMin),
+      ...spanToFields(startAbs, endAbs),
+      isAllDay: false,
       category: cat,
       color,
       notes: ''
@@ -552,15 +566,28 @@ export class DragDropController {
 
     const startX = startEvent.clientX;
     const startY = startEvent.clientY;
-    const origDateKey = evt.dateKey;
-    const origStartMin = timeToMinutes(evt.startTime);
-    const origEndMin = timeToMinutes(evt.endTime);
-    const duration = origEndMin - origStartMin;
+    const { startAbs: origStartAbs, endAbs: origEndAbs } = getEventSpan(evt);
+    const duration = origEndAbs - origStartAbs;
 
     const isChained = evt.isChained && evt.protocolGroupId;
-    // Keep the point where the card was grabbed under the pointer (1px = 1 minute)
-    const grabOffsetMin = clamp(startY - eventCard.getBoundingClientRect().top, 0, duration);
+    // Keep the point where the card was grabbed under the pointer (1px = 1 minute).
+    // The card may be a later day's part of an overnight event.
+    const segmentStartAbs = Math.max(origStartAbs, toAbsMinutes(eventCard.dataset.segmentDateKey || evt.dateKey, '00:00'));
+    const grabOffsetMin = (segmentStartAbs - origStartAbs) + clamp(startY - eventCard.getBoundingClientRect().top, 0, duration);
     let didMove = false;
+
+    // New start for a pointer position. Recurring occurrences stay within one day;
+    // other events may be moved across midnight.
+    const targetFor = (clientX, clientY) => {
+      const dayCol = document.elementFromPoint(clientX, clientY)?.closest('.cal-day-column');
+      if (!dayCol) return null;
+      const relativeY = clientY - dayCol.getBoundingClientRect().top;
+      const dayStartAbs = toAbsMinutes(dayCol.dataset.dateKey, '00:00');
+      const startMin = isSeries
+        ? clamp(snapToGrid(relativeY - grabOffsetMin, 15), 0, Math.max(0, MINUTES_PER_DAY - 1 - duration))
+        : snapToGrid(relativeY - grabOffsetMin, 15);
+      return { dayCol, startAbs: dayStartAbs + startMin };
+    };
 
     eventCard.classList.add('is-being-dragged');
 
@@ -574,27 +601,18 @@ export class DragDropController {
       }
       if (!didMove) return;
 
-      const dayCol = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest('.cal-day-column');
-      if (!dayCol) return;
+      const target = targetFor(moveEvent.clientX, moveEvent.clientY);
+      if (!target) return;
+      const colStartAbs = toAbsMinutes(target.dayCol.dataset.dateKey, '00:00');
+      const timeLabel = this.formatSpanTimes(target.startAbs, target.startAbs + duration);
 
-      const rect = dayCol.getBoundingClientRect();
-      const relativeY = moveEvent.clientY - rect.top;
-      const targetStartMin = snapToGrid(clamp(relativeY - grabOffsetMin, 0, 1440 - duration), 15);
-
-      const isShift = moveEvent.shiftKey;
-      const isCtrl = moveEvent.ctrlKey || moveEvent.metaKey;
-
+      let hint = '';
       if (isChained) {
-        if (isShift) {
-          this.updateGhostPreview(dayCol, targetStartMin, duration, `Shift Entire Protocol Group (${evt.protocolName || 'Protocol'})`);
-        } else if (isCtrl) {
-          this.updateGhostPreview(dayCol, targetStartMin, duration, `Cascade Shift Downstream Steps`);
-        } else {
-          this.updateGhostPreview(dayCol, targetStartMin, duration, `Shift: group • Ctrl: cascade`);
-        }
-      } else {
-        this.updateGhostPreview(dayCol, targetStartMin, duration, '');
+        if (moveEvent.shiftKey) hint = `Shift Entire Protocol Group (${evt.protocolName || 'Protocol'})`;
+        else if (moveEvent.ctrlKey || moveEvent.metaKey) hint = 'Cascade Shift Downstream Steps';
+        else hint = 'Shift: group • Ctrl: cascade';
       }
+      this.updateGhostPreview(target.dayCol, target.startAbs - colStartAbs, duration, hint, timeLabel);
     };
 
     const onMouseUp = (upEvent) => {
@@ -615,29 +633,23 @@ export class DragDropController {
         return;
       }
 
-      const dayCol = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest('.cal-day-column');
-      if (!dayCol) return;
-
-      const rect = dayCol.getBoundingClientRect();
-      const relativeY = upEvent.clientY - rect.top;
-      const newStartMin = snapToGrid(clamp(relativeY - grabOffsetMin, 0, 1440 - duration), 15);
-      const newEndMin = newStartMin + duration;
-      const newDateKey = dayCol.dataset.dateKey;
+      const target = targetFor(upEvent.clientX, upEvent.clientY);
+      if (!target) return;
+      const newStartAbs = target.startAbs;
+      const newFields = spanToFields(newStartAbs, newStartAbs + duration);
+      const delta = newStartAbs - origStartAbs;
+      if (delta === 0) return;
 
       const isShift = upEvent.shiftKey;
       const isCtrl = upEvent.ctrlKey || upEvent.metaKey;
 
-      // Handle Recurring Series move
+      // Handle Recurring Series move (occurrences are single-day)
       if (isSeries) {
         if (this.onPromptSeriesEdit) {
           this.onPromptSeriesEdit(
             this.store.series.find((s) => s.id === seriesId),
             occurrenceDate,
-            {
-              dateKey: newDateKey,
-              startTime: minutesToTime(newStartMin),
-              endTime: minutesToTime(newEndMin)
-            }
+            { dateKey: newFields.dateKey, startTime: newFields.startTime, endTime: newFields.endTime }
           );
         }
         return;
@@ -645,36 +657,22 @@ export class DragDropController {
 
       // Handle Protocol moves
       if (isChained) {
-        const curDate = parseDateKey(origDateKey);
-        const targetDate = parseDateKey(newDateKey);
-        const diffTime = targetDate.getTime() - curDate.getTime();
-        const deltaDays = Math.round(diffTime / (1000 * 3600 * 24));
-        const deltaMinutes = newStartMin - origStartMin;
-
         if (isShift) {
           // Whole group shift
-          this.store.shiftProtocolGroup(evt.protocolGroupId, deltaDays, deltaMinutes);
-          this.showToast(`Shifted entire protocol group by ${deltaDays} day(s), ${deltaMinutes} mins.`);
+          this.store.shiftProtocolGroup(evt.protocolGroupId, 0, delta);
+          this.showToast(`Shifted entire protocol group by ${formatSignedDuration(delta)}.`);
         } else if (isCtrl) {
           // Cascade shift downstream
-          this.store.cascadeShiftProtocolSteps(evt.protocolGroupId, evt.id, deltaDays, deltaMinutes);
-          this.showToast(`Cascaded downstream steps by ${deltaDays} day(s), ${deltaMinutes} mins.`);
+          this.store.cascadeShiftProtocolSteps(evt.protocolGroupId, evt.id, 0, delta);
+          this.showToast(`Cascaded downstream steps by ${formatSignedDuration(delta)}.`);
         } else {
           // Single step shift
-          this.store.updateEvent(evt.id, {
-            dateKey: newDateKey,
-            startTime: minutesToTime(newStartMin),
-            endTime: minutesToTime(newEndMin)
-          });
+          this.store.updateEvent(evt.id, newFields);
           this.showToast(`Moved individual step. Hold Shift to move group; Ctrl to cascade.`);
         }
       } else {
         // Regular single event move
-        this.store.updateEvent(evt.id, {
-          dateKey: newDateKey,
-          startTime: minutesToTime(newStartMin),
-          endTime: minutesToTime(newEndMin)
-        });
+        this.store.updateEvent(evt.id, newFields);
       }
     };
 
@@ -698,26 +696,45 @@ export class DragDropController {
     const dayCol = eventCard.closest('.cal-day-column');
     if (!dayCol) return;
 
-    const colRect = dayCol.getBoundingClientRect();
-    const origStartMin = timeToMinutes(evt.startTime);
-    const origEndMin = timeToMinutes(evt.endTime);
+    const { startAbs: origStartAbs, endAbs: origEndAbs } = getEventSpan(evt);
+    const segDayStart = toAbsMinutes(eventCard.dataset.segmentDateKey || evt.dateKey, '00:00');
+    const segDayEnd = segDayStart + MINUTES_PER_DAY;
+    const origTop = eventCard.style.top;
+    const origHeight = eventCard.style.height;
 
-    let curStartMin = origStartMin;
-    let curEndMin = origEndMin;
+    let curStartAbs = origStartAbs;
+    let curEndAbs = origEndAbs;
 
     eventCard.classList.add('is-resizing');
 
     const onMouseMove = (moveEvent) => {
-      const relativeY = moveEvent.clientY - colRect.top;
-      const snappedMin = snapToGrid(clamp(relativeY, 0, 1440), 15);
+      // The pointer may move into another day's column (resizing past midnight)
+      const pointer = this.pointerToAbs(moveEvent.clientX, moveEvent.clientY);
+      if (!pointer) return;
+      // Recurring occurrences are single-day (end at 23:59 at the latest)
+      const abs = isSeries ? clamp(pointer.abs, segDayStart, segDayEnd - 1) : pointer.abs;
 
       if (isTop) {
-        curStartMin = Math.min(snappedMin, curEndMin - 15);
-        eventCard.style.top = `${curStartMin}px`;
-        eventCard.style.height = `${curEndMin - curStartMin}px`;
+        curStartAbs = Math.min(abs, curEndAbs - 15);
       } else {
-        curEndMin = Math.max(snappedMin, curStartMin + 15);
-        eventCard.style.height = `${curEndMin - curStartMin}px`;
+        curEndAbs = Math.max(abs, curStartAbs + 15);
+      }
+
+      // Live preview: this card shows the part on its own day, the ghost shows the rest
+      const visibleStart = clamp(curStartAbs, segDayStart, segDayEnd);
+      const visibleEnd = clamp(curEndAbs, segDayStart, segDayEnd);
+      eventCard.style.top = `${visibleStart - segDayStart}px`;
+      eventCard.style.height = `${Math.max(15, visibleEnd - visibleStart)}px`;
+
+      const label = this.formatSpanTimes(curStartAbs, curEndAbs);
+      if (pointer.col !== dayCol) {
+        const colStart = toAbsMinutes(pointer.col.dataset.dateKey, '00:00');
+        const ghostStart = clamp(curStartAbs, colStart, colStart + MINUTES_PER_DAY);
+        const ghostEnd = clamp(curEndAbs, colStart, colStart + MINUTES_PER_DAY);
+        this.updateGhostPreview(pointer.col, ghostStart - colStart, Math.max(15, ghostEnd - ghostStart), '', label);
+      } else {
+        this.removeGhostPreview();
+        eventCard.title = label;
       }
     };
 
@@ -726,26 +743,25 @@ export class DragDropController {
       document.removeEventListener('pointerup', onMouseUp);
       document.removeEventListener('pointercancel', onMouseUp);
       eventCard.classList.remove('is-resizing');
+      this.removeGhostPreview();
 
-      if (upEvent.type === 'pointercancel' || (curStartMin === origStartMin && curEndMin === origEndMin)) {
-        eventCard.style.top = `${origStartMin}px`;
-        eventCard.style.height = `${origEndMin - origStartMin}px`;
+      if (upEvent.type === 'pointercancel' || (curStartAbs === origStartAbs && curEndAbs === origEndAbs)) {
+        eventCard.style.top = origTop;
+        eventCard.style.height = origHeight;
         return;
       }
       // The release would otherwise count as a click and open the edit dialog
       this.suppressNextClick();
 
       const isCtrl = upEvent.ctrlKey || upEvent.metaKey;
+      const newFields = spanToFields(curStartAbs, curEndAbs);
 
       if (isSeries) {
         if (this.onPromptSeriesEdit) {
           this.onPromptSeriesEdit(
             this.store.series.find((s) => s.id === seriesId),
             occurrenceDate,
-            {
-              startTime: minutesToTime(curStartMin),
-              endTime: minutesToTime(curEndMin)
-            }
+            { startTime: newFields.startTime, endTime: newFields.endTime }
           );
         }
         return;
@@ -753,17 +769,11 @@ export class DragDropController {
 
       if (evt.isChained && isCtrl && !isTop) {
         // Cascade resize end time downstream
-        const deltaMinutes = curEndMin - origEndMin;
-        this.store.resizeStepAndCascade(evt.id, {
-          startTime: minutesToTime(curStartMin),
-          endTime: minutesToTime(curEndMin)
-        }, deltaMinutes);
-        this.showToast(`Extended duration and cascaded downstream steps by ${deltaMinutes} min.`);
+        const deltaMinutes = curEndAbs - origEndAbs;
+        this.store.resizeStepAndCascade(evt.id, newFields, deltaMinutes);
+        this.showToast(`Changed duration and cascaded downstream steps by ${formatSignedDuration(deltaMinutes)}.`);
       } else {
-        this.store.updateEvent(evt.id, {
-          startTime: minutesToTime(curStartMin),
-          endTime: minutesToTime(curEndMin)
-        });
+        this.store.updateEvent(evt.id, newFields);
       }
     };
 
@@ -890,18 +900,24 @@ export class DragDropController {
   /**
    * Visual Ghost Box
    */
-  updateGhostPreview(dayCol, startMinute, durationMinutes = 60, customLabel = '') {
+  /**
+   * Ghost box in dayCol from startMinute (may be negative / past midnight: the box is
+   * clipped to the column). timeLabel describes the whole event when it spans days.
+   */
+  updateGhostPreview(dayCol, startMinute, durationMinutes = 60, customLabel = '', timeLabel = null) {
     if (!this.ghostPreviewEl) {
       this.ghostPreviewEl = document.createElement('div');
       this.ghostPreviewEl.className = 'cal-ghost-preview';
       document.body.appendChild(this.ghostPreviewEl);
     }
 
+    const visibleStart = clamp(startMinute, 0, MINUTES_PER_DAY);
+    const visibleEnd = clamp(startMinute + durationMinutes, 0, MINUTES_PER_DAY);
     const rect = dayCol.getBoundingClientRect();
-    const top = rect.top + window.scrollY + startMinute;
+    const top = rect.top + window.scrollY + visibleStart;
     const left = rect.left + window.scrollX + 2;
     const width = rect.width - 4;
-    const height = Math.max(24, durationMinutes);
+    const height = Math.max(24, visibleEnd - visibleStart);
 
     this.ghostPreviewEl.style.top = `${top}px`;
     this.ghostPreviewEl.style.left = `${left}px`;
@@ -909,11 +925,34 @@ export class DragDropController {
     this.ghostPreviewEl.style.height = `${height}px`;
     this.ghostPreviewEl.style.display = 'block';
 
-    const timeLabel = `${minutesToTime(startMinute)} – ${minutesToTime(startMinute + durationMinutes)}`;
+    const label = timeLabel || `${minutesToTime(startMinute)} – ${minutesToTime(startMinute + durationMinutes)}`;
     this.ghostPreviewEl.innerHTML = `
-      <div class="ghost-time">${timeLabel}</div>
+      <div class="ghost-time">${escapeHtml(label)}</div>
       ${customLabel ? `<div class="ghost-extra">${escapeHtml(customLabel)}</div>` : ''}
     `;
+  }
+
+  // { col, abs } for the day column and snapped absolute minute under the pointer
+  pointerToAbs(clientX, clientY) {
+    const col = document.elementFromPoint(clientX, clientY)?.closest('.cal-day-column');
+    if (!col || !col.dataset.dateKey) return null;
+    const relativeY = clientY - col.getBoundingClientRect().top;
+    return {
+      col,
+      abs: toAbsMinutes(col.dataset.dateKey, '00:00') + snapToGrid(clamp(relativeY, 0, MINUTES_PER_DAY), 15)
+    };
+  }
+
+  // "6 PM – 7 PM", or "Mon 6 PM – Tue 3 PM" when the span crosses midnight
+  formatSpanTimes(startAbs, endAbs) {
+    const start = fromAbsMinutes(startAbs);
+    const end = fromAbsMinutes(endAbs);
+    const use24 = this.store.settings.use24Hour;
+    if (start.dateKey === end.dateKey || (endAbs - startAbs <= MINUTES_PER_DAY && end.time === '00:00')) {
+      return `${formatTimeDisplay(start.time, use24)} – ${formatTimeDisplay(end.time, use24)}`;
+    }
+    const weekday = (key) => parseDateKey(key).toLocaleDateString('en-US', { weekday: 'short' });
+    return `${weekday(start.dateKey)} ${formatTimeDisplay(start.time, use24)} – ${weekday(end.dateKey)} ${formatTimeDisplay(end.time, use24)}`;
   }
 
   removeGhostPreview() {

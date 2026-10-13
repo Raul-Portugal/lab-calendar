@@ -226,6 +226,28 @@
   box-shadow: 0 4px 8px rgba(60,64,67,0.3);
 }
 
+/* Overnight events: the parts continuing from / into another day have square edges */
+.cal-event-card.continues-before {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-style: dashed;
+}
+
+.cal-event-card.continues-after {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-style: dashed;
+}
+
+.event-continuation {
+  font-size: 10px;
+  font-style: italic;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .cal-event-card.is-being-dragged {
   opacity: 0.6;
   cursor: grabbing;

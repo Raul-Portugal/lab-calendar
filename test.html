@@ -495,18 +495,52 @@
       assert(renderer.matchesFilters({ title: 'x', category: 'Deleted Category' }) === true, 'Events of a deleted category stay visible');
       store.visibleCategories.add('Microscopy');
 
-      // 25. Protocols crossing midnight roll over instead of piling up at 23:59
-      const { placeAtAbsoluteMinute } = await import('./js/protocols.js');
+      // 25. Overnight events: steps run past midnight at their real times
+      const { toAbsMinutes, fromAbsMinutes, getEventSpan, spanToFields, isAllDayEvent, getEventDayRange } = await import('./js/utils.js');
+      assert(fromAbsMinutes(toAbsMinutes('2026-10-25', '18:30')).dateKey === '2026-10-25' && fromAbsMinutes(toAbsMinutes('2026-10-25', '18:30')).time === '18:30', 'Absolute minutes round-trip (incl. DST day)');
+      assert(toAbsMinutes('2026-10-26', '00:00') - toAbsMinutes('2026-10-25', '00:00') === 1440, 'A DST-change day is still 1440 wall-clock minutes');
+      const incubation = {
+        id: 'p_incub', name: 'Overnight', color: 'ocean', steps: [
+          { id: 's1', title: 'Setup', durationMinutes: 60, anchorType: 'after-previous', gapMinutes: 0, stepType: 'active' },
+          { id: 's2', title: '20 h incubation', durationMinutes: 20 * 60, anchorType: 'after-previous', gapMinutes: 0, stepType: 'passive' },
+          { id: 's3', title: 'Harvest', durationMinutes: 30, anchorType: 'after-previous', gapMinutes: 15, stepType: 'active' }
+        ]
+      };
+      const overnight = instantiateProtocol(incubation, '2026-10-15', 18 * 60).events;
+      assert(overnight[1].dateKey === '2026-10-15' && overnight[1].startTime === '19:00' && overnight[1].endDateKey === '2026-10-16' && overnight[1].endTime === '15:00', '20 h incubation after an 18:00 step runs 19:00 -> 15:00 next day');
+      assert(overnight[2].dateKey === '2026-10-16' && overnight[2].startTime === '15:15', 'Step after the incubation follows it on the next day');
+      assert(checkProtocolChainIntegrity(overnight, overnight[0].protocolGroupId).size === 0, 'Overnight chain has no sequence warnings');
       const lateWb = instantiateProtocol(wbProto, '2026-10-15', 20 * 60);
-      const durationsKept = lateWb.events.every((e, i) => timeToMinutes(e.endTime) - timeToMinutes(e.startTime) === wbProto.steps[i].durationMinutes);
+      const durationsKept = lateWb.events.every((e, i) => { const s = getEventSpan(e); return s.endAbs - s.startAbs === wbProto.steps[i].durationMinutes; });
       assert(durationsKept, 'Late protocol: every step keeps its full duration');
-      assert(lateWb.events[0].dateKey === '2026-10-15' && lateWb.events[2].dateKey === '2026-10-16', 'Late protocol: steps after midnight move to the next day');
-      assert(!lateWb.events.some(e => e.startTime === '23:59'), 'Late protocol: no steps collapsed at 23:59');
-      const lateShift = shiftProtocolGroup([{ id: 'l1', protocolGroupId: 'gl', dateKey: '2026-10-15', startTime: '22:30', endTime: '23:15' }], 'gl', 0, 90);
-      assert(lateShift[0].dateKey === '2026-10-16' && lateShift[0].startTime === '00:00' && lateShift[0].endTime === '00:45', 'Shifting past midnight moves the step to the next day');
+      assert(lateWb.events[2].dateKey === '2026-10-15' && lateWb.events[2].startTime === '22:15' && lateWb.events[2].endDateKey === '2026-10-16', 'Late protocol: a step crossing midnight starts on time instead of jumping to 00:00');
+      const lateShift = shiftProtocolGroup([{ id: 'l1', protocolGroupId: 'gl', dateKey: '2026-10-15', startTime: '22:30', endTime: '23:15' }], 'gl', 0, 60);
+      assert(lateShift[0].dateKey === '2026-10-15' && lateShift[0].startTime === '23:30' && lateShift[0].endDateKey === '2026-10-16' && lateShift[0].endTime === '00:15', 'Shifting across midnight keeps the exact time and duration');
       const earlyShift = shiftProtocolGroup([{ id: 'e1', protocolGroupId: 'ge', dateKey: '2026-10-15', startTime: '00:30', endTime: '01:00' }], 'ge', 0, -60);
-      assert(earlyShift[0].dateKey === '2026-10-14' && earlyShift[0].startTime === '23:30', 'Shifting before midnight moves the step to the previous day');
-      assert(placeAtAbsoluteMinute('2026-10-15', 1430, 60).dateKey === '2026-10-16', 'placeAtAbsoluteMinute never lets an event cross midnight');
+      assert(earlyShift[0].dateKey === '2026-10-14' && earlyShift[0].startTime === '23:30' && earlyShift[0].endDateKey === '2026-10-15' && earlyShift[0].endTime === '00:00', 'Shifting before midnight moves the step to the previous day');
+      const cascadedOvernight = cascadeShiftProtocolSteps(overnight, overnight[0].protocolGroupId, overnight[1].id, 0, 120);
+      assert(cascadedOvernight[1].endTime === '17:00' && cascadedOvernight[2].startTime === '17:15' && cascadedOvernight[0].startTime === '18:00', 'Cascading an overnight step moves it and later steps only');
+      const clash = JSON.parse(JSON.stringify(overnight));
+      Object.assign(clash[2], spanToFields(toAbsMinutes('2026-10-16', '14:00'), toAbsMinutes('2026-10-16', '14:30')));
+      assert(checkProtocolChainIntegrity(clash, clash[0].protocolGroupId).has(clash[2].id), 'A step starting before an overnight step ends (next day) is flagged');
+      assert(isAllDayEvent({ dateKey: '2026-10-01', endDateKey: '2026-10-03', isAllDay: true }) && isAllDayEvent({ dateKey: '2026-10-01', endDateKey: '2026-10-03', startTime: '00:00', endTime: '23:59' }), 'All-day detection (flag, and legacy untagged multi-day)');
+      assert(!isAllDayEvent(overnight[1]), 'Overnight timed event is not all-day');
+      const midnightEnd = { dateKey: '2026-10-15', startTime: '23:00', endDateKey: '2026-10-16', endTime: '00:00' };
+      assert(getEventDayRange(midnightEnd).lastKey === '2026-10-15', 'Event ending exactly at midnight does not appear on the next day');
+      const quotaSplit = calculateQuotaStats([{ id: 'qn', title: 'Night', weeklyTarget: 10, categories: ['Bench Work'] }],
+        [{ id: 'n1', category: 'Bench Work', dateKey: '2026-10-18', startTime: '22:00', endDateKey: '2026-10-19', endTime: '02:00' }], new Date('2026-10-19'));
+      assert(quotaSplit.qn.weeklyHours === 2 && quotaSplit.qn.totalHours === 4, 'Goals count only the part of an overnight event that falls in the week');
+      const { buildIcsContent: buildIcsOvernight } = await import('./js/storage.js');
+      assert(buildIcsOvernight([overnight[1]]).includes('DTEND:20261016T150000'), 'ICS: overnight event ends on the next day');
+      const overnightRenderer = new (await import('./js/calendar.js')).CalendarRenderer(document.createElement('div'), store);
+      const segsDay1 = overnightRenderer.getDaySegments('2026-10-15', [overnight[1]]);
+      const segsDay2 = overnightRenderer.getDaySegments('2026-10-16', [overnight[1]]);
+      assert(segsDay1[0].startMin === 19 * 60 && segsDay1[0].endMin === 1440 && !segsDay1[0].segIsEnd, 'Day 1 shows the overnight event from 19:00 to midnight');
+      assert(segsDay2[0].startMin === 0 && segsDay2[0].endMin === 15 * 60 && !segsDay2[0].segIsStart, 'Day 2 shows it from midnight to 15:00');
+      store.events = JSON.parse(JSON.stringify(overnight));
+      store.splitEvent(overnight[1].id);
+      const halves = store.events.filter(e => e.title.startsWith('20 h incubation'));
+      assert(halves.length === 2 && halves[0].endDateKey === '2026-10-16' && halves[0].endTime === '05:00' && halves[1].startTime === '05:00', 'Splitting an overnight step splits its full 20 h span');
 
       // 26. Ctrl+resize cascades only the steps AFTER the resized one
       store.events = JSON.parse(JSON.stringify(instantiated.events));

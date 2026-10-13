@@ -3,7 +3,16 @@
  * Implements Series + Exceptions data model and derived step indexing
  */
 
-import { generateId, timeToMinutes, minutesToTime, formatDateKey, parseDateKey, shiftDateKey, calculateDaysBetween } from './utils.js';
+import {
+  generateId,
+  parseDateKey,
+  shiftDateKey,
+  calculateDaysBetween,
+  getEventSpan,
+  getEventDayRange,
+  spanToFields,
+  isAllDayEvent
+} from './utils.js';
 import { loadStateFromStorage, saveStateToStorage, getStorageKey } from './storage.js';
 import { BUILT_IN_PROTOCOLS, shiftProtocolGroup as shiftProtoEvents, cascadeShiftProtocolSteps, checkProtocolChainIntegrity } from './protocols.js';
 
@@ -342,9 +351,8 @@ class StateStore {
     const maxDateKey = dateKeysList[dateKeysList.length - 1];
 
     this.events.forEach((evt) => {
-      const startKey = evt.dateKey;
-      const endKey = evt.endDateKey || evt.dateKey;
-      if (dateKeySet.has(startKey) || (startKey <= maxDateKey && endKey >= minDateKey)) {
+      const { firstKey, lastKey } = getEventDayRange(evt);
+      if (firstKey <= maxDateKey && lastKey >= minDateKey) {
         resultEvents.push(evt);
       }
     });
@@ -358,10 +366,7 @@ class StateStore {
           // Find ALL events in the store for this protocol group so total step count is accurate
           const allGroupEvents = this.events
             .filter((e) => e.protocolGroupId === evt.protocolGroupId)
-            .sort((a, b) => {
-              if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
-              return timeToMinutes(a.startTime) - timeToMinutes(b.startTime);
-            });
+            .sort((a, b) => getEventSpan(a).startAbs - getEventSpan(b).startAbs);
           protocolGroups.set(evt.protocolGroupId, allGroupEvents);
         }
       }
@@ -431,20 +436,16 @@ class StateStore {
   // Split event: creates "3a" and "3b" if chained, or two equal blocks
   splitEvent(id) {
     const target = this.events.find((e) => e.id === id);
-    if (!target) return;
+    if (!target || isAllDayEvent(target)) return;
 
-    const startMin = timeToMinutes(target.startTime);
-    const endMin = timeToMinutes(target.endTime);
-    const duration = endMin - startMin;
-    if (duration < 20) return;
-
-    const half = Math.floor(duration / 2);
-    const midMin = startMin + half;
+    const { startAbs, endAbs } = getEventSpan(target);
+    if (endAbs - startAbs < 20) return;
+    const midAbs = startAbs + Math.floor((endAbs - startAbs) / 2);
 
     this.pushHistorySnapshot(`Split event "${target.title}"`);
 
     // First half
-    target.endTime = minutesToTime(midMin);
+    Object.assign(target, spanToFields(startAbs, midAbs));
     if (target.isChained) {
       target.isSplitHalf = true;
       target.splitLabel = 'Part A';
@@ -454,8 +455,7 @@ class StateStore {
     const part2 = {
       ...JSON.parse(JSON.stringify(target)),
       id: generateId('evt_split'),
-      startTime: minutesToTime(midMin),
-      endTime: minutesToTime(endMin),
+      ...spanToFields(midAbs, endAbs),
       title: `${target.title} (Part B)`,
       isSplitHalf: target.isChained,
       splitLabel: 'Part B'
@@ -472,20 +472,16 @@ class StateStore {
 
     this.pushHistorySnapshot(`Duplicate event "${target.title}"`);
 
-    const startMin = timeToMinutes(target.startTime);
-    const endMin = timeToMinutes(target.endTime);
-    const duration = endMin - startMin;
-
-    let newStart = Math.min(1440 - duration, startMin + duration);
-    let newEnd = newStart + duration;
-
     const clone = {
       ...JSON.parse(JSON.stringify(target)),
       id: generateId('evt_clone'),
-      title: `${target.title} (Copy)`,
-      startTime: minutesToTime(newStart),
-      endTime: minutesToTime(newEnd)
+      title: `${target.title} (Copy)`
     };
+    // Timed copies go right after the original (possibly into the next day)
+    if (!isAllDayEvent(target)) {
+      const { startAbs, endAbs } = getEventSpan(target);
+      Object.assign(clone, spanToFields(endAbs, endAbs + (endAbs - startAbs)));
+    }
 
     // Detach from protocol group to ensure independent behavior
     delete clone.protocolGroupId;

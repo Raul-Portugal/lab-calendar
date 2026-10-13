@@ -25,7 +25,11 @@ import {
   getCategoryDefaultColor,
   escapeHtml,
   safeColor,
-  isSmallScreen
+  isSmallScreen,
+  isAllDayEvent,
+  toAbsMinutes,
+  shiftDateKey,
+  calculateDaysBetween
 } from './utils.js';
 
 class LabCalendarApp {
@@ -732,6 +736,23 @@ class LabCalendarApp {
     this.editEventTimeRow = document.getElementById('editEventTimeRow');
     this.editEventDateRangeRow = document.getElementById('editEventDateRangeRow');
     this.editEventDateInput = document.getElementById('editEventDate');
+    this.editEventEndDateTimed = document.getElementById('editEventEndDateTimed');
+
+    // Moving the start date moves the end date with it (keeps multi-day durations)
+    this.editEventDateInput?.addEventListener('focus', () => {
+      this.editEventPrevStartDate = this.editEventDateInput.value;
+    });
+    this.editEventDateInput?.addEventListener('change', () => {
+      const prev = this.editEventPrevStartDate;
+      const next = this.editEventDateInput.value;
+      const end = this.editEventEndDateTimed?.value;
+      if (prev && next && end) {
+        this.editEventEndDateTimed.value = shiftDateKey(end, calculateDaysBetween(prev, next));
+      } else if (next && this.editEventEndDateTimed) {
+        this.editEventEndDateTimed.value = next;
+      }
+      this.editEventPrevStartDate = next;
+    });
     this.editEventStartTimeInput = document.getElementById('editEventStartTime');
     this.editEventEndTimeInput = document.getElementById('editEventEndTime');
     this.editEventStartDate = document.getElementById('editEventStartDate');
@@ -829,7 +850,7 @@ class LabCalendarApp {
 
   openEventEditModal(event = null) {
     this.currentEditingEvent = event;
-    const isAllDay = Boolean(event?.isAllDay || (event?.endDateKey && event?.endDateKey !== event?.dateKey));
+    const isAllDay = Boolean(event && isAllDayEvent(event));
 
     this.populateCategoriesSelect(this.editEventCategorySelect, event?.category || 'Bench Work');
 
@@ -849,6 +870,7 @@ class LabCalendarApp {
       this.editEventDateRangeRow?.classList.add('hidden');
       this.editEventDateInput.value = event?.dateKey || formatDateKey(store.currentDate);
       this.editEventStartTimeInput.value = event?.startTime || '10:00';
+      this.editEventEndDateTimed.value = event?.endDateKey || this.editEventDateInput.value;
       this.editEventEndTimeInput.value = event?.endTime || '11:00';
     }
 
@@ -940,16 +962,27 @@ class LabCalendarApp {
       const dateKey = this.editEventDateInput.value;
       const startTime = this.editEventStartTimeInput.value;
       const endTime = this.editEventEndTimeInput.value;
+      // Timed events may end on a later day (e.g. overnight incubations)
+      const endDateKey = this.editEventEndDateTimed.value || dateKey;
 
-      if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
-        alert('End time must be after start time.');
+      if (!dateKey || !startTime || !endTime) {
+        alert('Please fill in the start and end date and time.');
+        return;
+      }
+      if (toAbsMinutes(endDateKey, endTime) <= toAbsMinutes(dateKey, startTime)) {
+        alert('The end must be after the start.');
+        return;
+      }
+      // Recurring occurrences are single-day
+      if (this.currentEditingEvent?.isSeriesOccurrence && endDateKey !== dateKey) {
+        alert('Recurring events must start and end on the same day.');
         return;
       }
       updates = {
         title,
         isAllDay: false,
         dateKey,
-        endDateKey: dateKey,
+        endDateKey,
         startTime,
         endTime,
         category,
