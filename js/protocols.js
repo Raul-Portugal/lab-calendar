@@ -29,6 +29,28 @@ function cleanInt(value, min, max, fallback) {
 }
 
 /**
+ * Protocol categories organise the protocol library (e.g. "Protein Analysis").
+ * They are separate from calendar categories: scheduled steps always use the
+ * "Protocol" calendar category. "Protocol" was the old placeholder value, so it
+ * counts as uncategorised.
+ */
+export const UNCATEGORIZED_PROTOCOLS = 'Uncategorized';
+
+export function normalizeProtocolCategory(category) {
+  const trimmed = typeof category === 'string' ? category.trim() : '';
+  return !trimmed || trimmed === 'Protocol' ? UNCATEGORIZED_PROTOCOLS : trimmed;
+}
+
+// Calendar days a protocol covers when started at startMinutes (steps may run past midnight)
+export function computeTotalDays(steps, startMinutes = 9 * 60) {
+  const refKey = '2026-01-05';
+  const { events } = instantiateProtocol({ id: 'days', name: '', steps }, refKey, startMinutes);
+  const day0 = toAbsMinutes(refKey, '00:00');
+  const lastEnd = Math.max(...events.map((evt) => getEventSpan(evt).endAbs));
+  return Math.floor((Math.max(day0, lastEnd - 1) - day0) / MINUTES_PER_DAY) + 1;
+}
+
+/**
  * Validate an untrusted protocol template (e.g. an imported .protocol.json shared by
  * another lab member). Only known fields survive; text is kept as plain strings and
  * numbers / enums are coerced to safe ranges. Returns null if it is not a usable protocol.
@@ -58,15 +80,11 @@ export function sanitizeProtocol(raw) {
     });
   if (steps.length === 0) return null;
 
-  const maxDayOffset = steps.reduce(
-    (max, s) => (s.anchorType === 'day-anchored' ? Math.max(max, s.dayOffset) : max), 0
-  );
-
   return {
     name,
-    category: 'Protocol',
+    category: normalizeProtocolCategory(cleanText(raw.category, 60)),
     color: safeColor(raw.color),
-    totalDays: maxDayOffset + 1,
+    totalDays: computeTotalDays(steps),
     version: cleanInt(raw.version, 1, 1000, 1),
     description: cleanText(raw.description, 2000),
     steps
@@ -77,7 +95,7 @@ export const BUILT_IN_PROTOCOLS = [
   {
     id: 'proto_western_blot',
     name: 'Western Blot (2 Days)',
-    category: 'Protocol',
+    category: 'Protein Analysis',
     color: 'ocean', // Unified experimental blue
     totalDays: 2,
     version: 1,
@@ -181,7 +199,7 @@ export const BUILT_IN_PROTOCOLS = [
   {
     id: 'proto_pcr_gel',
     name: 'PCR & Agarose Gel Electrophoresis',
-    category: 'Protocol',
+    category: 'Molecular Biology',
     color: 'ocean',
     totalDays: 1,
     version: 1,
@@ -228,7 +246,7 @@ export const BUILT_IN_PROTOCOLS = [
   {
     id: 'proto_rna_extraction',
     name: 'RNA Extraction & cDNA Synthesis',
-    category: 'Protocol',
+    category: 'Molecular Biology',
     color: 'ocean',
     totalDays: 1,
     version: 1,
@@ -275,7 +293,7 @@ export const BUILT_IN_PROTOCOLS = [
   {
     id: 'proto_transformation',
     name: 'Bacterial Transformation (2 Days)',
-    category: 'Protocol',
+    category: 'Microbiology & Cloning',
     color: 'ocean',
     totalDays: 2,
     version: 1,

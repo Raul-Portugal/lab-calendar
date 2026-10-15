@@ -225,6 +225,71 @@
   text-decoration: underline;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Protocol library grouped by protocol category (foldable) */
+.protocol-category-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.protocol-category-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 4px 2px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--google-grey-800);
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+.protocol-category-header:hover {
+  background-color: var(--google-grey-100);
+}
+
+.protocol-category-chevron {
+  display: inline-block;
+  width: 10px;
+  color: var(--google-grey-600, var(--google-grey-700));
+  transition: transform 0.15s ease;
+}
+.protocol-category-group.is-collapsed .protocol-category-chevron {
+  transform: rotate(-90deg);
+}
+
+.protocol-category-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.protocol-category-count {
+  font-weight: 500;
+  color: var(--google-grey-700);
+}
+
+.protocol-category-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.protocol-category-group.is-collapsed .protocol-category-items {
+  display: none;
+}
+
 /* Draggable Weekly Quotas */
 .quota-card {
   background-color: #ffffff;

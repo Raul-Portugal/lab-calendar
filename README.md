@@ -13,7 +13,9 @@ Inspired by Google Calendar, LabCal provides specialized wet-lab features:
 - **Recurring Series & Exceptions**: Google Calendar-style recurring events (e.g. Wednesday Lab Meeting) with "This occurrence only" vs "All occurrences" editing.
 - **Weekly Flexible Quotas**: Goal tracking (e.g. Thesis Writing 4h/week) with dynamic calculation, progress bars, and over-scheduling indicators.
 - **RFC 5545 iCalendar (.ics) Export**: Strict CRLF, 75-octet folded iCalendar exporter.
-- **Protocol Sharing**: Export and import custom protocols as `.protocol.json` to share with lab members.
+- **Protocol Sharing**: Export (⤓ on a protocol) and import (**⤒ Import** in the Lab Protocols header) protocols as `.protocol.json` to share with lab members. Several files, or a file holding a list of protocols, can be imported at once.
+- **Protocol Categories**: The protocol library is grouped into foldable categories (e.g. Protein Analysis, Imaging). Set a protocol's category in the Protocol Builder.
+- **Protocol Files from an LLM**: [`docs/protocol-import-llm-instructions.md`](docs/protocol-import-llm-instructions.md) contains system instructions that turn any protocol document into an importable `.protocol.json`, grouped into sensible active / passive / instrument-run blocks.
 
 ---
 

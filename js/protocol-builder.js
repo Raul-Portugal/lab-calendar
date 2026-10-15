@@ -16,7 +16,12 @@ import {
   getEventSpan,
   MINUTES_PER_DAY
 } from './utils.js';
-import { instantiateProtocol, MAX_STEP_MINUTES } from './protocols.js';
+import {
+  instantiateProtocol,
+  MAX_STEP_MINUTES,
+  normalizeProtocolCategory,
+  UNCATEGORIZED_PROTOCOLS
+} from './protocols.js';
 
 // Reference date for the preview: only day offsets and clock times are shown
 const PREVIEW_DATE_KEY = '2026-01-05';
@@ -101,16 +106,19 @@ export class ProtocolBuilder {
     this.editingProtocolId = isCustom ? templateProtocol.id : null;
     this.collapsedStepIds = new Set();
 
+    this.renderCategoryOptions();
+
     if (templateProtocol) {
       this.nameInput.value = isCustom ? templateProtocol.name : `${templateProtocol.name} (Custom)`;
-      this.categoryInput.value = templateProtocol.category || 'Protocol';
+      const category = normalizeProtocolCategory(templateProtocol.category);
+      this.categoryInput.value = category === UNCATEGORIZED_PROTOCOLS ? '' : category;
       this.colorSelect.value = templateProtocol.color || 'ocean';
       this.descInput.value = templateProtocol.description || '';
       this.steps = JSON.parse(JSON.stringify(templateProtocol.steps))
         .map((s) => ({ ...s, id: s.id || generateId('step') }));
     } else {
       this.nameInput.value = '';
-      this.categoryInput.value = 'Protocol';
+      this.categoryInput.value = '';
       this.colorSelect.value = 'ocean';
       this.descInput.value = '';
       this.steps = [
@@ -126,6 +134,21 @@ export class ProtocolBuilder {
 
   close() {
     this.modalEl.classList.add('hidden');
+  }
+
+  // Suggest the protocol categories already used in the library
+  renderCategoryOptions() {
+    const datalist = document.getElementById('protoBuildCategoryOptions');
+    if (!datalist) return;
+    const categories = new Set(this.store.getAllProtocols()
+      .map((p) => normalizeProtocolCategory(p.category))
+      .filter((c) => c !== UNCATEGORIZED_PROTOCOLS));
+    datalist.innerHTML = '';
+    [...categories].sort((a, b) => a.localeCompare(b)).forEach((category) => {
+      const option = document.createElement('option');
+      option.value = category;
+      datalist.appendChild(option);
+    });
   }
 
   newStep(overrides = {}) {
@@ -543,7 +566,7 @@ export class ProtocolBuilder {
     const protocol = {
       id: this.editingProtocolId || generateId('proto_custom'),
       name: name,
-      category: 'Protocol',
+      category: normalizeProtocolCategory(this.categoryInput.value.slice(0, 60)),
       color: this.colorSelect.value || 'ocean',
       totalDays,
       version: 1,

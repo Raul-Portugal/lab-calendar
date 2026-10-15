@@ -165,10 +165,13 @@
             <span>Lab Protocols</span>
             <span class="section-badge" id="protocolCountBadge">4</span>
           </div>
-          <button class="section-action-btn" id="buildProtocolLinkBtn">+ Build</button>
+          <div class="section-actions">
+            <button class="section-action-btn" id="importProtocolLinkBtn" title="Import a shared .protocol.json file">⤒ Import</button>
+            <button class="section-action-btn" id="buildProtocolLinkBtn">+ Build</button>
+          </div>
         </div>
         <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
-          Drag to schedule all chained multi-day steps. Hold Shift to move group.
+          Drag to schedule all chained multi-day steps. Hold Shift to move group. Click a category to fold it.
         </p>
         <div class="protocols-list" id="sidebarProtocolsList"></div>
       </div>
@@ -319,8 +322,9 @@
 
         <div class="form-row-2">
           <div class="form-group">
-            <label>Category</label>
-            <input type="text" class="input-text" id="protoBuildCategory" value="Molecular Biology">
+            <label>Protocol Category (library folder)</label>
+            <input type="text" class="input-text" id="protoBuildCategory" list="protoBuildCategoryOptions" maxlength="60" placeholder="e.g. Protein Analysis, Cell Culture">
+            <datalist id="protoBuildCategoryOptions"></datalist>
           </div>
           <div class="form-group">
             <label>Description / Overview</label>
@@ -609,7 +613,7 @@
   </div>
 
   <!-- Hidden File Input for Single Protocol Import -->
-  <input type="file" id="protocolFileInput" accept=".json,.protocol.json" class="hidden">
+  <input type="file" id="protocolFileInput" accept=".json,.protocol.json,application/json" multiple class="hidden">
 
   <!-- Cloud Sync & Multi-Device Setup Modal -->
   <div class="modal-overlay hidden" id="cloudSyncModal">

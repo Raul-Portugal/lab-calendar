@@ -1,0 +1,79 @@
+{
+  "name": "Immunofluorescence Staining of Cultured Cells (2 Days)",
+  "category": "Imaging",
+  "color": "lavender",
+  "description": "Indirect immunofluorescence on cells grown on coverslips in a 24-well plate: fixation, permeabilisation, blocking, overnight primary antibody at 4 °C, secondary antibody, DAPI and mounting. Times assume one 24-well plate. Prepare beforehand: 4% PFA in PBS, 0.1% Triton X-100 in PBS, blocking buffer (1% BSA + 5% normal goat serum in PBS).",
+  "version": 1,
+  "steps": [
+    {
+      "title": "Fix & permeabilise cells",
+      "durationMinutes": 45,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "active",
+      "notes": "Aspirate medium, wash 2x PBS. Fix in 4% PFA 15 min at RT. Wash 3x PBS, 5 min each. Permeabilise in 0.1% Triton X-100 in PBS, 10 min at RT. Work in the fume hood for PFA."
+    },
+    {
+      "title": "Blocking (1% BSA + 5% NGS, RT)",
+      "durationMinutes": 60,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "passive",
+      "notes": "300 µL blocking buffer per well, 1 h at RT on a gentle rocker."
+    },
+    {
+      "title": "Add primary antibody",
+      "durationMinutes": 15,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "active",
+      "notes": "Dilute primary antibody in blocking buffer (e.g. 1:200). Invert coverslips onto 50 µL drops on parafilm in a humid chamber."
+    },
+    {
+      "title": "Primary antibody incubation (overnight, 4 °C)",
+      "durationMinutes": 960,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "passive",
+      "notes": "Humid chamber at 4 °C, 14-18 h (16 h planned)."
+    },
+    {
+      "title": "Washes & secondary antibody setup",
+      "durationMinutes": 30,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "active",
+      "notes": "Return coverslips to the plate. Wash 3x PBS, 5 min each. Dilute secondary antibody 1:500 in blocking buffer; protect from light from here on."
+    },
+    {
+      "title": "Secondary antibody incubation (dark, RT)",
+      "durationMinutes": 60,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "passive",
+      "notes": "1 h at RT in the dark."
+    },
+    {
+      "title": "Washes, DAPI & mounting",
+      "durationMinutes": 40,
+      "anchorType": "after-previous",
+      "gapMinutes": 0,
+      "dayOffset": 0,
+      "anchorTime": "09:00",
+      "stepType": "active",
+      "notes": "Wash 3x PBS, 5 min each. DAPI 1 µg/mL, 5 min. Wash 1x PBS, dip in water. Mount on slides with antifade medium, let cure in the dark before imaging."
+    }
+  ]
+}
