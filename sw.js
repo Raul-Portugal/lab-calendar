@@ -3,7 +3,7 @@
  * Enables PWA installation, instant loading, and 100% offline functionality
  */
 
-const CACHE_NAME = 'labcal-cache-v2';
+const CACHE_NAME = 'labcal-cache-v3';
 
 const STATIC_ASSETS = [
   './',
@@ -33,7 +33,8 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
+      // 'reload': fill the offline cache from the server, not from a stale HTTP cache
+      return cache.addAll(STATIC_ASSETS.map((url) => new Request(url, { cache: 'reload' })));
     })
   );
 });
@@ -65,9 +66,14 @@ self.addEventListener('fetch', (event) => {
 
   // Network-first for app files, so updates are picked up on the next load
   // (stale-while-revalidate served the previous version once after every deploy).
-  // The cache is the offline fallback.
+  // cache: 'no-cache' makes the browser revalidate with the server instead of reusing
+  // its HTTP cache: GitHub Pages allows 10 minutes of reuse (max-age=600), which kept
+  // serving the old version after a deploy. Unchanged files come back as a quick 304.
+  // A new Request is built from the URL because navigation requests can't be re-used
+  // with different options. The cache is the offline fallback.
+  const freshRequest = new Request(event.request.url, { cache: 'no-cache', credentials: 'same-origin' });
   event.respondWith(
-    fetch(event.request)
+    fetch(freshRequest)
       .then((networkResponse) => {
         if (networkResponse && networkResponse.status === 200) {
           const clone = networkResponse.clone();
