@@ -519,6 +519,7 @@ class StateStore {
     delete clone.protocolGroupId;
     delete clone.isChained;
     delete clone.isSplitHalf;
+    delete clone.overlapsPrevious;
 
     this.events.push(clone);
     this.notify('event_duplicated');

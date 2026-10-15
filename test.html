@@ -563,6 +563,30 @@
       const halves = store.events.filter(e => e.title.startsWith('20 h incubation'));
       assert(halves.length === 2 && halves[0].endDateKey === '2026-10-16' && halves[0].endTime === '05:00' && halves[1].startTime === '05:00', 'Splitting an overnight step splits its full 20 h span');
 
+      // 25b. Overlapping steps ("during previous") and earliest start times
+      const overlapProto = { id: 'p_ov', name: 'Overlap', steps: [
+        { title: 'Blocking', durationMinutes: 60, anchorType: 'after-previous', stepType: 'passive' },
+        { title: 'Prepare buffer', durationMinutes: 20, anchorType: 'during-previous', offsetMinutes: 30, stepType: 'active' },
+        { title: 'Wash', durationMinutes: 30, anchorType: 'after-previous', gapMinutes: 0, stepType: 'active' }
+      ] };
+      const ov = instantiateProtocol(overlapProto, '2026-10-15', 9 * 60).events;
+      assert(ov[1].startTime === '09:30' && ov[1].endTime === '09:50', '"During previous" step starts 30 min into the incubation');
+      assert(ov[2].startTime === '10:00', 'Next "after previous" step waits for the incubation to finish (10:00), not just the overlapping step (09:50)');
+      assert(ov[1].overlapsPrevious === true && checkProtocolChainIntegrity(ov, ov[0].protocolGroupId).size === 0, 'A planned overlap is not flagged as a sequence conflict');
+      const unplanned = JSON.parse(JSON.stringify(ov)); delete unplanned[1].overlapsPrevious;
+      assert(checkProtocolChainIntegrity(unplanned, unplanned[0].protocolGroupId).has(unplanned[1].id), 'An unplanned overlap is still flagged');
+      const nightProto = { id: 'p_nb', name: 'Night', steps: [
+        { title: 'Setup', durationMinutes: 60, anchorType: 'after-previous', stepType: 'active' },
+        { title: 'Overnight incubation', durationMinutes: 16 * 60, anchorType: 'after-previous', stepType: 'passive' },
+        { title: 'Harvest', durationMinutes: 45, anchorType: 'after-previous', notBefore: '09:30', stepType: 'active' }
+      ] };
+      const night = instantiateProtocol(nightProto, '2026-10-15', 13 * 60).events;
+      assert(night[1].endDateKey === '2026-10-16' && night[1].endTime === '06:00' && night[2].dateKey === '2026-10-16' && night[2].startTime === '09:30', 'Overnight incubation ends 06:00; the next step waits until its earliest start 09:30');
+      const evening = instantiateProtocol(nightProto, '2026-10-15', 3 * 60).events;
+      assert(evening[2].dateKey === '2026-10-15' && evening[2].startTime === '20:00', 'Earliest start does not delay a step that is already later in the day');
+      const sanitizedOverlap = sanitizeProtocol({ name: 'x', steps: [{ title: 'a' }, { title: 'b', anchorType: 'during-previous', offsetMinutes: '45', notBefore: '09:30' }, { title: 'c', notBefore: '9:30am' }] });
+      assert(sanitizedOverlap.steps[1].anchorType === 'during-previous' && sanitizedOverlap.steps[1].offsetMinutes === 45 && sanitizedOverlap.steps[1].notBefore === '09:30' && sanitizedOverlap.steps[2].notBefore === '', 'Imported files keep overlap / earliest-start fields and reject malformed times');
+
       // 26. Ctrl+resize cascades only the steps AFTER the resized one
       store.events = JSON.parse(JSON.stringify(instantiated.events));
       const step3 = store.events[2];

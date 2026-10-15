@@ -17,7 +17,8 @@ import {
 export const MAX_STEP_MINUTES = 14 * MINUTES_PER_DAY;
 
 const STEP_TYPES = ['active', 'passive', 'run'];
-const ANCHOR_TYPES = ['after-previous', 'day-anchored'];
+const ANCHOR_TYPES = ['after-previous', 'during-previous', 'day-anchored'];
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function cleanText(value, maxLength) {
   return typeof value === 'string' ? value.slice(0, maxLength) : '';
@@ -65,13 +66,15 @@ export function sanitizeProtocol(raw) {
     .slice(0, 100)
     .map((s) => {
       const anchorType = ANCHOR_TYPES.includes(s.anchorType) ? s.anchorType : 'after-previous';
-      const anchorTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(s.anchorTime) ? s.anchorTime : '09:00';
+      const anchorTime = TIME_PATTERN.test(s.anchorTime) ? s.anchorTime : '09:00';
       return {
         id: generateId('step'),
         title: cleanText(s.title, 200) || 'Untitled Step',
         durationMinutes: cleanInt(s.durationMinutes, 5, MAX_STEP_MINUTES, 30),
         anchorType,
         gapMinutes: cleanInt(s.gapMinutes, 0, MAX_STEP_MINUTES, 0),
+        offsetMinutes: cleanInt(s.offsetMinutes, 0, MAX_STEP_MINUTES, 0),
+        notBefore: TIME_PATTERN.test(s.notBefore) ? s.notBefore : '',
         dayOffset: cleanInt(s.dayOffset, 0, 30, 0),
         anchorTime,
         stepType: STEP_TYPES.includes(s.stepType) ? s.stepType : 'active',
@@ -343,22 +346,38 @@ export function instantiateProtocol(protocol, targetDateKey, targetStartMinutes)
   const protocolColor = protocol.color || 'ocean';
 
   const dayStartAbs = toAbsMinutes(targetDateKey, '00:00');
-  let currentAbs = dayStartAbs + targetStartMinutes;
+  let previousStartAbs = dayStartAbs + targetStartMinutes;
+  // "After previous" waits for everything before it to finish, so a step that overlaps
+  // ("during previous") does not cut the incubation it runs alongside short
+  let latestEndAbs = previousStartAbs;
 
   protocol.steps.forEach((step, index) => {
+    let startAbs;
     if (step.anchorType === 'day-anchored') {
-      currentAbs = dayStartAbs + (step.dayOffset || 0) * MINUTES_PER_DAY + timeToMinutes(step.anchorTime || '09:00');
-    } else if (index > 0) {
-      currentAbs += (step.gapMinutes || 0);
+      startAbs = dayStartAbs + (step.dayOffset || 0) * MINUTES_PER_DAY + timeToMinutes(step.anchorTime || '09:00');
+    } else if (index === 0) {
+      startAbs = dayStartAbs + targetStartMinutes;
+    } else if (step.anchorType === 'during-previous') {
+      startAbs = previousStartAbs + (step.offsetMinutes || 0);
+    } else {
+      startAbs = latestEndAbs + (step.gapMinutes || 0);
     }
 
-    const startAbs = currentAbs;
-    currentAbs += step.durationMinutes;
+    // Earliest start time of day (e.g. after an overnight incubation ending at 06:00,
+    // start the next step at 09:30 rather than 06:00)
+    if (step.notBefore && step.anchorType !== 'day-anchored') {
+      const earliest = Math.floor(startAbs / MINUTES_PER_DAY) * MINUTES_PER_DAY + timeToMinutes(step.notBefore);
+      startAbs = Math.max(startAbs, earliest);
+    }
+
+    const endAbs = startAbs + step.durationMinutes;
+    previousStartAbs = startAbs;
+    latestEndAbs = Math.max(latestEndAbs, endAbs);
 
     const event = {
       id: generateId('evt_step'),
       title: step.title,
-      ...spanToFields(startAbs, currentAbs),
+      ...spanToFields(startAbs, endAbs),
       isAllDay: false,
       color: protocolColor, // Unified protocol color scheme
       category: 'Protocol',
@@ -369,7 +388,9 @@ export function instantiateProtocol(protocol, targetDateKey, targetStartMinutes)
       protocolTemplateVersion: protocol.version || 1,
       protocolName: protocol.name,
       stepDefId: step.id,
-      isChained: true
+      isChained: true,
+      // Planned overlap with the previous step: not a sequence conflict
+      ...(step.anchorType === 'during-previous' && index > 0 ? { overlapsPrevious: true } : {})
     };
 
     events.push(event);
@@ -429,11 +450,15 @@ export function checkProtocolChainIntegrity(allEvents, protocolGroupId) {
   const groupSteps = sortByStart(allEvents.filter((e) => e.protocolGroupId === protocolGroupId));
   const brokenSteps = new Set();
 
-  // A step is flagged when it starts before the previous step ends (also across days)
+  // A step is flagged when it starts before an earlier step has finished (also across
+  // days), unless it was planned to run during the previous step
+  let latestEnd = groupSteps.length ? groupSteps[0].span.endAbs : 0;
   for (let i = 1; i < groupSteps.length; i++) {
-    if (groupSteps[i].span.startAbs < groupSteps[i - 1].span.endAbs) {
-      brokenSteps.add(groupSteps[i].evt.id);
+    const { evt, span } = groupSteps[i];
+    if (span.startAbs < latestEnd && !evt.overlapsPrevious) {
+      brokenSteps.add(evt.id);
     }
+    latestEnd = Math.max(latestEnd, span.endAbs);
   }
 
   return brokenSteps;

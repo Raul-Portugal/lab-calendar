@@ -37,8 +37,10 @@ Each **Step** is:
 {
   "title": string,
   "durationMinutes": integer,
-  "anchorType": "after-previous" | "day-anchored",
+  "anchorType": "after-previous" | "during-previous" | "day-anchored",
   "gapMinutes": integer,
+  "offsetMinutes": integer,
+  "notBefore": "HH:MM" | "",
   "dayOffset": integer,
   "anchorTime": "HH:MM",
   "stepType": "active" | "passive" | "run",
@@ -58,8 +60,10 @@ Field rules (the app enforces these limits; values outside them are changed or d
 | `steps` | Required, 1–100 steps; aim for **4–15** for a typical protocol. |
 | `title` | ≤ 200 characters, ideally ≤ 60. Say what happens and include the key condition, e.g. `Primary antibody incubation (overnight, 4 °C)`. |
 | `durationMinutes` | Integer, 5 to 20160 (14 days). Round **up** to a multiple of 5. |
-| `anchorType` | `after-previous` (default): starts when the previous step ends, plus `gapMinutes`. `day-anchored`: starts at `anchorTime` on day `dayOffset`. |
-| `gapMinutes` | Integer, 0 to 20160. Use only for short transitions (0–15 min) that are not worth a block of their own. **Usually 0.** Ignored for the first step and for day-anchored steps. |
+| `anchorType` | `after-previous` (default): starts when **all** earlier steps have finished, plus `gapMinutes`. `during-previous`: starts `offsetMinutes` after the **previous step begins**, running in parallel with it (e.g. preparing a buffer during an incubation). `day-anchored`: starts at `anchorTime` on day `dayOffset`. The first step is always `after-previous`. |
+| `gapMinutes` | Integer, 0 to 20160. Use only for short transitions (0–15 min) that are not worth a block of their own. **Usually 0.** Only used by `after-previous` steps (not the first step). |
+| `offsetMinutes` | Integer, 0 to 20160. Only for `during-previous` steps: minutes after the previous step **starts**. Use `0` otherwise. |
+| `notBefore` | `"HH:MM"` or `""`. Earliest time of day the step may start: if the schedule would start it earlier in the day, it waits until then. Use it for the step after an overnight incubation that should not start before the working day (e.g. `"09:00"`), or when the protocol says "next morning". Use `""` otherwise. Ignored for `day-anchored` steps. |
 | `dayOffset` | Integer, 0–30. Only for `day-anchored` steps: `0` = the day the protocol starts, `1` = the next day, ... Use `0` otherwise. |
 | `anchorTime` | 24-hour `"HH:MM"`, e.g. `"09:00"`. Only meaningful for `day-anchored` steps; use `"09:00"` otherwise. |
 | `stepType` | `active`, `passive` or `run` (see below). |
@@ -90,9 +94,11 @@ Think like a researcher planning their day, not like a copy editor.
 - "Overnight": use the stated time if any; otherwise **16 hours (960 min)**, and write the acceptable range in `notes` (e.g. "14–18 h").
 - Durations are integers in minutes, rounded up to a multiple of 5, never below 5.
 
-### Timing across days
+### Timing, overlaps and days
 
 - Use `after-previous` for every step by default. The app places steps at their real clock times, including steps that run past midnight: an overnight incubation started at 18:00 simply ends the next morning, and the following step starts after it.
+- Use `during-previous` when the protocol has you do hands-on work **while** an incubation or run is going (e.g. "during the 1 h blocking, prepare the antibody dilutions"). Set `offsetMinutes` to when that work starts relative to the start of the incubation. The step after it (`after-previous`) still waits for the incubation to finish.
+- After an overnight or very long incubation, give the next hands-on step a `notBefore` (e.g. `"09:00"`) so it is not scheduled in the middle of the night or at dawn; it then starts at the later of "incubation finished" and that time.
 - Use `day-anchored` **only** when the protocol prescribes a specific time of day on a later day (e.g. "Day 3, 9 am: harvest"). Then set `dayOffset` (days after the start day) and `anchorTime`. Make sure the steps before it can realistically finish by then.
 
 ### Notes content
@@ -108,7 +114,7 @@ Use the units from the source, and keep it factual: do not invent reagents, conc
 
 - The output is a single valid JSON object: double quotes, no trailing commas, no comments, no code fences, no text before or after.
 - `name` is set and `steps` has 1–100 steps.
-- Every step has all eight fields with the allowed values; numbers are integers.
+- Every step has all ten fields with the allowed values; numbers are integers.
 - No step is a trivial sub-action (e.g. a lone "aspirate medium" or "wait 5 min").
 - Every wait of ≥ 20 minutes is its own `passive` or `run` step with the correct duration.
 - The sum of the step durations matches the real working time of the protocol.
@@ -119,6 +125,6 @@ If the document contains several separate protocols, answer with a JSON **array*
 
 For a standard indirect immunofluorescence protocol on coverslips, a good answer is:
 
-{"name":"Immunofluorescence Staining of Cultured Cells (2 Days)","category":"Imaging","color":"lavender","description":"Indirect immunofluorescence on cells grown on coverslips in a 24-well plate: fixation, permeabilisation, blocking, overnight primary antibody at 4 °C, secondary antibody, DAPI and mounting. Times assume one 24-well plate. Prepare beforehand: 4% PFA in PBS, 0.1% Triton X-100 in PBS, blocking buffer (1% BSA + 5% normal goat serum in PBS).","version":1,"steps":[{"title":"Fix & permeabilise cells","durationMinutes":45,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Aspirate medium, wash 2x PBS. Fix in 4% PFA 15 min at RT. Wash 3x PBS, 5 min each. Permeabilise in 0.1% Triton X-100 in PBS, 10 min at RT. Work in the fume hood for PFA."},{"title":"Blocking (1% BSA + 5% NGS, RT)","durationMinutes":60,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"passive","notes":"300 µL blocking buffer per well, 1 h at RT on a gentle rocker."},{"title":"Add primary antibody","durationMinutes":15,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Dilute primary antibody in blocking buffer (e.g. 1:200). Invert coverslips onto 50 µL drops on parafilm in a humid chamber."},{"title":"Primary antibody incubation (overnight, 4 °C)","durationMinutes":960,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"passive","notes":"Humid chamber at 4 °C, 14-18 h (16 h planned)."},{"title":"Washes & secondary antibody setup","durationMinutes":30,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Return coverslips to the plate. Wash 3x PBS, 5 min each. Dilute secondary antibody 1:500 in blocking buffer; protect from light from here on."},{"title":"Secondary antibody incubation (dark, RT)","durationMinutes":60,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"passive","notes":"1 h at RT in the dark."},{"title":"Washes, DAPI & mounting","durationMinutes":40,"anchorType":"after-previous","gapMinutes":0,"dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Wash 3x PBS, 5 min each. DAPI 1 µg/mL, 5 min. Wash 1x PBS, dip in water. Mount on slides with antifade medium, let cure in the dark before imaging."}]}
+{"name":"Immunofluorescence Staining of Cultured Cells (2 Days)","category":"Imaging","color":"lavender","description":"Indirect immunofluorescence on cells grown on coverslips in a 24-well plate: fixation, permeabilisation, blocking, overnight primary antibody at 4 °C, secondary antibody, DAPI and mounting. Times assume one 24-well plate. Prepare beforehand: 4% PFA in PBS, 0.1% Triton X-100 in PBS, blocking buffer (1% BSA + 5% normal goat serum in PBS).","version":1,"steps":[{"title":"Fix & permeabilise cells","durationMinutes":45,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"","dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Aspirate medium, wash 2x PBS. Fix in 4% PFA 15 min at RT. Wash 3x PBS, 5 min each. Permeabilise in 0.1% Triton X-100 in PBS, 10 min at RT. Work in the fume hood for PFA."},{"title":"Blocking (1% BSA + 5% NGS, RT)","durationMinutes":60,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"","dayOffset":0,"anchorTime":"09:00","stepType":"passive","notes":"300 µL blocking buffer per well, 1 h at RT on a gentle rocker."},{"title":"Add primary antibody","durationMinutes":15,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"","dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Dilute primary antibody in blocking buffer (e.g. 1:200). Invert coverslips onto 50 µL drops on parafilm in a humid chamber."},{"title":"Primary antibody incubation (overnight, 4 °C)","durationMinutes":960,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"","dayOffset":0,"anchorTime":"09:00","stepType":"passive","notes":"Humid chamber at 4 °C, 14-18 h (16 h planned)."},{"title":"Washes & secondary antibody setup","durationMinutes":30,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"09:00","dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Return coverslips to the plate. Wash 3x PBS, 5 min each. Dilute secondary antibody 1:500 in blocking buffer; protect from light from here on."},{"title":"Secondary antibody incubation (dark, RT)","durationMinutes":60,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"","dayOffset":0,"anchorTime":"09:00","stepType":"passive","notes":"1 h at RT in the dark."},{"title":"Washes, DAPI & mounting","durationMinutes":40,"anchorType":"after-previous","gapMinutes":0,"offsetMinutes":0,"notBefore":"","dayOffset":0,"anchorTime":"09:00","stepType":"active","notes":"Wash 3x PBS, 5 min each. DAPI 1 µg/mL, 5 min. Wash 1x PBS, dip in water. Mount on slides with antifade medium, let cure in the dark before imaging."}]}
 
-Note how the 15-minute fixation and the 5-minute washes stay inside active blocks, while blocking, the overnight primary antibody and the secondary antibody incubation are separate passive steps.
+Note how the 15-minute fixation and the 5-minute washes stay inside active blocks, while blocking, the overnight primary antibody and the secondary antibody incubation are separate passive steps. The first step of day 2 has `"notBefore":"09:00"`, so if the overnight incubation finishes at dawn the washes are scheduled for the start of the working day.

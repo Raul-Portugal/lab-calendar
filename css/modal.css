@@ -334,6 +334,21 @@
   visibility: hidden;
 }
 
+.not-before-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.not-before-label input {
+  accent-color: var(--google-blue);
+}
+
+.step-not-before-input:disabled {
+  opacity: 0.5;
+}
+
 .timeline-preview-header {
   display: flex;
   align-items: center;
