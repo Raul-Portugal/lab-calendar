@@ -364,6 +364,17 @@
       assert(!('extraField' in evilProto), 'sanitizeProtocol drops unknown fields');
       assert(sanitizeProtocol({ name: 'x', steps: 'nope' }) === null && sanitizeProtocol(null) === null, 'sanitizeProtocol rejects invalid files');
       assert(safeColor('lavender') === 'lavender' && safeColor('__proto__') === 'ocean', 'safeColor only allows palette names');
+      const { normalizeProtocolCategory, computeTotalDays, UNCATEGORIZED_PROTOCOLS } = await import('./js/protocols.js');
+      assert(sanitizeProtocol({ name: 'IF', category: '  Imaging  ', steps: [{ title: 'Fix' }] }).category === 'Imaging', 'Imported protocol keeps its (trimmed) category');
+      assert(normalizeProtocolCategory('') === UNCATEGORIZED_PROTOCOLS && normalizeProtocolCategory('Protocol') === UNCATEGORIZED_PROTOCOLS && normalizeProtocolCategory(undefined) === UNCATEGORIZED_PROTOCOLS, 'Missing or old placeholder category counts as Uncategorized');
+      assert(sanitizeProtocol({ name: 'x', category: 'y'.repeat(100), steps: [{}] }).category.length === 60, 'Protocol category is limited to 60 characters');
+      assert(computeTotalDays([{ durationMinutes: 60 }, { durationMinutes: 20 * 60 }]) === 2, 'totalDays counts days reached by an overnight step (09:00 + 1 h + 20 h -> day 2)');
+      assert(BUILT_IN_PROTOCOLS.every(p => normalizeProtocolCategory(p.category) !== UNCATEGORIZED_PROTOCOLS), 'Built-in protocols have library categories');
+      const protoCountBefore = store.customProtocols.length;
+      store.addCustomProtocols([{ id: 'imp_a', name: 'A', steps: [] }, { id: 'imp_b', name: 'B', steps: [] }]);
+      assert(store.customProtocols.length === protoCountBefore + 2, 'addCustomProtocols imports several protocols');
+      store.undo();
+      assert(store.customProtocols.length === protoCountBefore, 'Importing several protocols is one undo step');
       assert(escapeHtml(0) === '0', 'escapeHtml keeps numeric zero');
 
       // 22. Cloud sync: never silently discard data (mocked Supabase PostgREST)

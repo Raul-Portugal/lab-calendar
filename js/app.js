@@ -11,7 +11,9 @@ import { ProtocolBuilder } from './protocol-builder.js';
 import { calculateQuotaStats } from './quotas.js';
 import { exportToIcs, exportStateToJson, exportSingleProtocol } from './storage.js';
 import { SyncManager, SUPABASE_SETUP_SQL } from './sync.js';
-import { sanitizeProtocol } from './protocols.js';
+import { sanitizeProtocol, normalizeProtocolCategory, UNCATEGORIZED_PROTOCOLS } from './protocols.js';
+
+const COLLAPSED_PROTOCOL_CATEGORIES_KEY = 'labcal_collapsed_protocol_categories';
 import {
   formatDateKey,
   getWeekDates,
@@ -37,6 +39,7 @@ class LabCalendarApp {
     this.store = store;
     this.syncManager = new SyncManager(store);
     this.currentEditingEvent = null;
+    this.collapsedProtocolCategories = this.loadCollapsedProtocolCategories();
     this.initDOM();
     this.initCalendar();
     this.initProtocolBuilder();
@@ -227,6 +230,10 @@ class LabCalendarApp {
 
     this.addQuotaLinkBtn?.addEventListener('click', () => this.openQuotaCreatorModal());
     this.buildProtocolLinkBtn?.addEventListener('click', () => this.protocolBuilder.open());
+    document.getElementById('importProtocolLinkBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.protocolFileInput?.click();
+    });
     this.addQuickClassLinkBtn?.addEventListener('click', () => this.openQuickClassModal());
     this.addCategoryLinkBtn?.addEventListener('click', () => this.openCategoryModal());
 
@@ -290,28 +297,48 @@ class LabCalendarApp {
       e.target.value = '';
     });
 
-    // Single protocol import
-    this.protocolFileInput?.addEventListener('change', (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const parsed = sanitizeProtocol(JSON.parse(event.target.result));
-          if (parsed) {
-            parsed.id = generateId('proto_shared');
-            store.addCustomProtocol(parsed);
-            this.showToast(`Imported protocol "${parsed.name}"!`);
-          } else {
-            alert('Invalid protocol template file.');
-          }
-        } catch (err) {
-          alert('Could not read protocol file.');
-        }
-      };
-      reader.readAsText(file);
+    // Protocol import: one or more .protocol.json files, each holding a protocol or a list of them
+    this.protocolFileInput?.addEventListener('change', async (e) => {
+      const files = [...(e.target.files || [])];
       e.target.value = '';
+      if (files.length === 0) return;
+
+      const imported = [];
+      const problems = [];
+      for (const file of files) {
+        let data;
+        try {
+          data = JSON.parse(await file.text());
+        } catch (err) {
+          problems.push(`${file.name}: not valid JSON`);
+          continue;
+        }
+        const candidates = Array.isArray(data) ? data : [data];
+        candidates.forEach((raw, i) => {
+          const protocol = sanitizeProtocol(raw);
+          if (protocol) {
+            imported.push(protocol);
+          } else {
+            const label = candidates.length > 1 ? `${file.name} (item ${i + 1})` : file.name;
+            problems.push(`${label}: needs a "name" and a non-empty "steps" list`);
+          }
+        });
+      }
+
+      if (imported.length > 0) {
+        imported.forEach((protocol) => {
+          protocol.id = generateId('proto_shared');
+          // Show the category the protocol landed in
+          this.collapsedProtocolCategories.delete(normalizeProtocolCategory(protocol.category));
+        });
+        store.addCustomProtocols(imported);
+        this.showToast(imported.length === 1
+          ? `Imported "${imported[0].name}" into ${normalizeProtocolCategory(imported[0].category)}`
+          : `Imported ${imported.length} protocols`);
+      }
+      if (problems.length > 0) {
+        alert(`Some protocols could not be imported:\n\n${problems.join('\n')}`);
+      }
     });
 
     // Close dropdowns on outside click
@@ -552,58 +579,119 @@ class LabCalendarApp {
     this.sidebarProtocolsList.innerHTML = '';
     this.protocolCountBadge.textContent = allProtocols.length;
 
+    // Group by protocol category: alphabetical, "Uncategorized" last
+    const groups = new Map();
     allProtocols.forEach((proto) => {
-      const card = document.createElement('div');
-      card.className = 'protocol-card';
-      card.draggable = true;
-      card.dataset.dragType = 'protocol';
-      card.dataset.dragPayload = proto.id;
-      card.title = `Drag to instantiate ${proto.steps.length} chained steps`;
-
-      const daysLabel = proto.totalDays === 1 ? '1 Day' : `${proto.totalDays} Days`;
-      const isCustom = proto.id.startsWith('proto_custom') || proto.id.startsWith('proto_shared');
-
-      card.innerHTML = `
-        <div class="protocol-card-header">
-          <div class="protocol-card-name">${escapeHtml(proto.name)}</div>
-          <div class="protocol-card-actions">
-            <span class="protocol-days-badge">${escapeHtml(daysLabel)}</span>
-            <button class="protocol-action-btn edit-proto-btn" title="Edit Protocol">✎</button>
-            <button class="protocol-action-btn share-btn" title="Export / Share .protocol.json">⤓</button>
-            <button class="protocol-action-btn delete-proto-btn" title="Delete Protocol" style="color:var(--google-red);">🗑</button>
-          </div>
-        </div>
-        <div class="protocol-card-meta">
-          <span>${proto.steps.length} steps • ${escapeHtml(proto.category || 'Protocol')}</span>
-          ${isCustom ? `<span style="color:var(--google-blue); font-weight:600;"> (Custom)</span>` : ''}
-        </div>
-      `;
-
-      card.querySelector('.edit-proto-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.protocolBuilder.open(proto);
-      });
-
-      card.querySelector('.share-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        exportSingleProtocol(proto);
-        this.showToast(`Exported "${proto.name}" as .protocol.json`);
-      });
-
-      card.querySelector('.delete-proto-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (confirm(`Delete protocol template "${proto.name}" from library?`)) {
-          store.deleteProtocol(proto.id);
-          this.showToast(`Deleted protocol "${proto.name}"`);
-        }
-      });
-
-      card.addEventListener('dblclick', () => {
-        this.protocolBuilder.open(proto);
-      });
-
-      this.sidebarProtocolsList.appendChild(card);
+      const category = normalizeProtocolCategory(proto.category);
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(proto);
     });
+    const categoryNames = [...groups.keys()].sort((a, b) => {
+      if (a === UNCATEGORIZED_PROTOCOLS) return 1;
+      if (b === UNCATEGORIZED_PROTOCOLS) return -1;
+      return a.localeCompare(b);
+    });
+
+    categoryNames.forEach((category) => {
+      const protocols = groups.get(category).sort((a, b) => a.name.localeCompare(b.name));
+      const isCollapsed = this.collapsedProtocolCategories.has(category);
+
+      const group = document.createElement('div');
+      group.className = `protocol-category-group ${isCollapsed ? 'is-collapsed' : ''}`;
+
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'protocol-category-header';
+      header.setAttribute('aria-expanded', String(!isCollapsed));
+      header.innerHTML = `
+        <span class="protocol-category-chevron">▾</span>
+        <span class="protocol-category-name">${escapeHtml(category)}</span>
+        <span class="protocol-category-count">${protocols.length}</span>
+      `;
+      header.addEventListener('click', () => this.toggleProtocolCategory(category));
+
+      const items = document.createElement('div');
+      items.className = 'protocol-category-items';
+      protocols.forEach((proto) => items.appendChild(this.createProtocolCard(proto)));
+
+      group.appendChild(header);
+      group.appendChild(items);
+      this.sidebarProtocolsList.appendChild(group);
+    });
+  }
+
+  // Folded protocol categories are a per-device preference (not synced)
+  loadCollapsedProtocolCategories() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(COLLAPSED_PROTOCOL_CATEGORIES_KEY) || '[]'));
+    } catch (e) {
+      return new Set();
+    }
+  }
+
+  toggleProtocolCategory(category) {
+    if (this.collapsedProtocolCategories.has(category)) {
+      this.collapsedProtocolCategories.delete(category);
+    } else {
+      this.collapsedProtocolCategories.add(category);
+    }
+    try {
+      localStorage.setItem(COLLAPSED_PROTOCOL_CATEGORIES_KEY, JSON.stringify([...this.collapsedProtocolCategories]));
+    } catch (e) {}
+    this.renderSidebarProtocols();
+  }
+
+  createProtocolCard(proto) {
+    const card = document.createElement('div');
+    card.className = 'protocol-card';
+    card.draggable = true;
+    card.dataset.dragType = 'protocol';
+    card.dataset.dragPayload = proto.id;
+    card.title = `Drag to instantiate ${proto.steps.length} chained steps`;
+
+    const daysLabel = proto.totalDays === 1 ? '1 Day' : `${proto.totalDays} Days`;
+    const isCustom = proto.id.startsWith('proto_custom') || proto.id.startsWith('proto_shared');
+
+    card.innerHTML = `
+      <div class="protocol-card-header">
+        <div class="protocol-card-name">${escapeHtml(proto.name)}</div>
+        <div class="protocol-card-actions">
+          <span class="protocol-days-badge">${escapeHtml(daysLabel)}</span>
+          <button class="protocol-action-btn edit-proto-btn" title="Edit Protocol">✎</button>
+          <button class="protocol-action-btn share-btn" title="Export / Share .protocol.json">⤓</button>
+          <button class="protocol-action-btn delete-proto-btn" title="Delete Protocol" style="color:var(--google-red);">🗑</button>
+        </div>
+      </div>
+      <div class="protocol-card-meta">
+        <span>${proto.steps.length} steps</span>
+        ${isCustom ? `<span style="color:var(--google-blue); font-weight:600;"> (Custom)</span>` : ''}
+      </div>
+    `;
+
+    card.querySelector('.edit-proto-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.protocolBuilder.open(proto);
+    });
+
+    card.querySelector('.share-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportSingleProtocol(proto);
+      this.showToast(`Exported "${proto.name}" as .protocol.json`);
+    });
+
+    card.querySelector('.delete-proto-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm(`Delete protocol template "${proto.name}" from library?`)) {
+        store.deleteProtocol(proto.id);
+        this.showToast(`Deleted protocol "${proto.name}"`);
+      }
+    });
+
+    card.addEventListener('dblclick', () => {
+      this.protocolBuilder.open(proto);
+    });
+
+    return card;
   }
 
   /**

@@ -649,8 +649,16 @@ class StateStore {
   }
 
   addCustomProtocol(protocol) {
-    this.pushHistorySnapshot(`Create protocol "${protocol.name}"`);
-    this.customProtocols.push(protocol);
+    this.addCustomProtocols([protocol]);
+  }
+
+  // One undo step for importing several protocols at once
+  addCustomProtocols(protocols) {
+    if (protocols.length === 0) return;
+    this.pushHistorySnapshot(protocols.length === 1
+      ? `Create protocol "${protocols[0].name}"`
+      : `Import ${protocols.length} protocols`);
+    this.customProtocols.push(...protocols);
     this.notify('protocol_created');
   }
 
