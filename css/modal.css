@@ -334,6 +334,60 @@
   visibility: hidden;
 }
 
+/* Export to Google Calendar dialog */
+.ics-export-body {
+  gap: 14px;
+}
+
+.ics-export-group {
+  border: 1px solid var(--google-grey-200);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ics-export-group legend {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--google-grey-700);
+  padding: 0 4px;
+}
+
+.ics-export-option {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--google-grey-800);
+  cursor: pointer;
+}
+
+.ics-export-option input[type="radio"],
+.ics-export-option input[type="checkbox"] {
+  accent-color: var(--google-blue);
+}
+
+.ics-range-hint {
+  font-size: 11px;
+  color: var(--google-grey-700);
+}
+
+.ics-export-summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--google-grey-900);
+}
+
+.ics-export-tip {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--google-grey-700);
+}
+
 .not-before-label {
   display: flex;
   align-items: center;

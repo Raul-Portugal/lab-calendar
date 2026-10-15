@@ -630,6 +630,9 @@
       assert(ics.includes('UNTIL=20261231T235959\r\n') || ics.includes('UNTIL=20261231T235959'), 'ICS: UNTIL is floating like DTSTART');
       assert(!ics.includes('T235959Z'), 'ICS: no UTC UNTIL with floating DTSTART');
       assert(ics.includes('DTSTART:20261002T150000'), 'ICS: DTSTART is the first real occurrence (Fri Oct 2), not the range start');
+      const occurrenceIcs = buildIcsContent([{ id: 'sx_2026-10-09', seriesId: 'sx', occurrenceDate: '2026-10-09', isSeriesOccurrence: true, title: 'Seminar', dateKey: '2026-10-09', startTime: '15:00', endTime: '16:00' }]);
+      assert(occurrenceIcs.includes('UID:series-sx-2026-10-09@labcalendar.app') && occurrenceIcs.includes('DTSTART:20261009T150000') && !occurrenceIcs.includes('RRULE'), 'ICS: a single occurrence (week export) is a one-off event with a stable per-date UID');
+      assert(occurrenceIcs.includes('X-WR-CALNAME:LabCal'), 'ICS: suggests the calendar name "LabCal"');
       const multiByte = 'DESCRIPTION:' + 'Add 5 µL at 4°C. '.repeat(10);
       const foldedMb = foldIcsLine(multiByte).split('\r\n');
       const enc = new TextEncoder();

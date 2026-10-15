@@ -199,10 +199,10 @@ export function exportSingleProtocol(protocol) {
  * Strict RFC 5545 iCalendar (.ics) Exporter
  * Implements CRLF line endings, 75-octet folding, character escaping, stable UIDs, DTSTAMP, and RRULE
  */
-export function exportToIcs(events, seriesList = [], exceptions = []) {
+export function exportToIcs(events, seriesList = [], exceptions = [], fileLabel = '') {
   downloadTextFile(
     buildIcsContent(events, seriesList, exceptions),
-    `lab_calendar_${new Date().toISOString().slice(0, 10)}.ics`,
+    `lab_calendar_${fileLabel || new Date().toISOString().slice(0, 10)}.ics`,
     'text/calendar;charset=utf-8'
   );
 }
@@ -244,7 +244,9 @@ export function buildIcsContent(events, seriesList = [], exceptions = []) {
     'VERSION:2.0',
     'PRODID:-//Lab Calendar//BioSchedule Web App//EN',
     'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH'
+    'METHOD:PUBLISH',
+    // Suggested name when a calendar app creates a calendar for the import
+    'X-WR-CALNAME:LabCal'
   ];
 
   const nowCompact = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
@@ -302,10 +304,11 @@ export function buildIcsContent(events, seriesList = [], exceptions = []) {
 
   // 2. Export Standalone and Instantiated Protocol Events
   (events || []).forEach((evt) => {
-    // Skip virtual occurrences that belong to a series (series handles it via RRULE)
-    if (evt.isSeriesOccurrence && !evt.isException) return;
-
-    const uid = `event-${evt.id}@labcalendar.app`;
+    // Single occurrences of a recurring series (date-range exports) get a stable UID per
+    // date, so re-importing the same week updates them instead of adding copies
+    const uid = evt.isSeriesOccurrence
+      ? `series-${evt.seriesId}-${evt.occurrenceDate}@labcalendar.app`
+      : `event-${evt.id}@labcalendar.app`;
 
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${uid}`);

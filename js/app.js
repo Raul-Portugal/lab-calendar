@@ -32,7 +32,8 @@ import {
   isAllDayEvent,
   toAbsMinutes,
   shiftDateKey,
-  calculateDaysBetween
+  calculateDaysBetween,
+  getEventDayRange
 } from './utils.js';
 
 class LabCalendarApp {
@@ -239,10 +240,7 @@ class LabCalendarApp {
     this.addCategoryLinkBtn?.addEventListener('click', () => this.openCategoryModal());
 
     // Direct 1-Click GCal export button
-    this.directGcalBtn?.addEventListener('click', () => {
-      exportToIcs(store.events, store.series, store.exceptions);
-      this.showToast('Downloaded lab_calendar.ics! In Google Calendar: Settings -> Import & export -> Import this file.');
-    });
+    this.directGcalBtn?.addEventListener('click', () => this.openIcsExportModal());
 
     // Export dropdown menu
     this.exportMenuBtn?.addEventListener('click', (e) => {
@@ -252,8 +250,7 @@ class LabCalendarApp {
 
     this.exportIcsBtn?.addEventListener('click', () => {
       this.exportDropdown.classList.add('hidden');
-      exportToIcs(store.events, store.series, store.exceptions);
-      this.showToast('Exported RFC 5545 iCalendar (.ics) with recurring rules.');
+      this.openIcsExportModal();
     });
 
     this.exportJsonBtn?.addEventListener('click', () => {
@@ -350,6 +347,7 @@ class LabCalendarApp {
 
     this.initSidebarSections();
     this.initDisplayOptions();
+    this.initIcsExportModal();
 
     this.initEventEditModal();
     this.initQuotaModal();
@@ -1800,6 +1798,135 @@ class LabCalendarApp {
 
   closeCloudSyncModal() {
     this.cloudSyncModal?.classList.add('hidden');
+  }
+
+  /**
+   * Export to Google Calendar: a week, a date range or everything, with or without
+   * passive steps / recurring events / hidden categories.
+   */
+  initIcsExportModal() {
+    this.icsModal = document.getElementById('icsExportModal');
+    if (!this.icsModal) return;
+    this.icsWeekDate = document.getElementById('icsWeekDate');
+    this.icsWeekLabel = document.getElementById('icsWeekLabel');
+    this.icsFromDate = document.getElementById('icsFromDate');
+    this.icsToDate = document.getElementById('icsToDate');
+    this.icsIncludePassive = document.getElementById('icsIncludePassive');
+    this.icsIncludeRecurring = document.getElementById('icsIncludeRecurring');
+    this.icsOnlyVisible = document.getElementById('icsOnlyVisible');
+    this.icsSummary = document.getElementById('icsExportSummary');
+
+    const close = () => this.icsModal.classList.add('hidden');
+    document.getElementById('icsExportCloseBtn')?.addEventListener('click', close);
+    document.getElementById('icsExportCancelBtn')?.addEventListener('click', close);
+
+    // Picking a date selects the matching range option
+    this.icsWeekDate.addEventListener('change', () => this.setIcsRange('week'));
+    [this.icsFromDate, this.icsToDate].forEach((input) => input.addEventListener('change', () => this.setIcsRange('custom')));
+    this.icsModal.querySelectorAll('input').forEach((input) => input.addEventListener('change', () => this.updateIcsSummary()));
+
+    document.getElementById('icsExportDownloadBtn')?.addEventListener('click', () => {
+      const result = this.computeIcsExport();
+      if (result.error) {
+        alert(result.error);
+        return;
+      }
+      if (result.count === 0) {
+        alert('Nothing to export with these options.');
+        return;
+      }
+      exportToIcs(result.events, result.series, result.exceptions, result.fileLabel);
+      close();
+      this.showToast(`Downloaded ${result.description}. In Google Calendar: Settings → Import & export → Import.`);
+    });
+  }
+
+  openIcsExportModal() {
+    const weekDates = getWeekDates(store.currentDate);
+    this.icsWeekDate.value = formatDateKey(store.currentDate);
+    this.icsFromDate.value = formatDateKey(weekDates[0]);
+    this.icsToDate.value = formatDateKey(weekDates[6]);
+    this.icsIncludePassive.checked = store.settings.showPassive !== false;
+    this.icsIncludeRecurring.checked = true;
+    this.icsOnlyVisible.checked = true;
+    this.setIcsRange('week');
+    this.icsModal.classList.remove('hidden');
+  }
+
+  setIcsRange(value) {
+    const radio = this.icsModal.querySelector(`input[name="icsRange"][value="${value}"]`);
+    if (radio) radio.checked = true;
+    this.updateIcsSummary();
+  }
+
+  updateIcsSummary() {
+    const weekStart = getWeekDates(parseDateKey(this.icsWeekDate.value || formatDateKey(store.currentDate)))[0];
+    const weekEnd = parseDateKey(shiftDateKey(formatDateKey(weekStart), 6));
+    const short = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    this.icsWeekLabel.textContent = `(${short(weekStart)} – ${short(weekEnd)})`;
+
+    const result = this.computeIcsExport();
+    this.icsSummary.textContent = result.error ? result.error : `Will export: ${result.description}`;
+  }
+
+  // Events / series to export for the dialog's current options
+  computeIcsExport() {
+    const range = this.icsModal.querySelector('input[name="icsRange"]:checked')?.value || 'week';
+    const includePassive = this.icsIncludePassive.checked;
+    const includeRecurring = this.icsIncludeRecurring.checked;
+    const onlyVisible = this.icsOnlyVisible.checked;
+
+    const categoryShown = (category) => !onlyVisible || !category ||
+      store.visibleCategories.has(category) || !store.categories.some((c) => c.name === category);
+    const keepEvent = (evt) => (includePassive || evt.stepType !== 'passive') && categoryShown(evt.category);
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    if (range === 'all') {
+      const events = store.events.filter(keepEvent);
+      const series = includeRecurring ? store.series.filter((s) => categoryShown(s.category)) : [];
+      const seriesIds = new Set(series.map((s) => s.id));
+      const exceptions = store.exceptions.filter((e) => seriesIds.has(e.seriesId));
+      return {
+        events,
+        series,
+        exceptions,
+        count: events.length + series.length,
+        fileLabel: `all_${formatDateKey(new Date())}`,
+        description: `${plural(events.length, 'event')}${series.length ? ` + ${series.length} recurring series` : ''}`
+      };
+    }
+
+    let fromKey;
+    let toKey;
+    if (range === 'week') {
+      fromKey = formatDateKey(getWeekDates(parseDateKey(this.icsWeekDate.value || formatDateKey(store.currentDate)))[0]);
+      toKey = shiftDateKey(fromKey, 6);
+    } else {
+      fromKey = this.icsFromDate.value;
+      toKey = this.icsToDate.value;
+      if (!fromKey || !toKey) return { error: 'Choose a start and an end date.', count: 0 };
+      if (toKey < fromKey) return { error: 'The end date must be on or after the start date.', count: 0 };
+      if (calculateDaysBetween(fromKey, toKey) > 366) return { error: 'Choose a range of at most one year (or "Everything").', count: 0 };
+    }
+
+    const dateKeys = [];
+    for (let key = fromKey; key <= toKey; key = shiftDateKey(key, 1)) dateKeys.push(key);
+
+    // Recurring events become single events on their dates in this range
+    const events = store.getExpandedEventsForRange(dateKeys).filter((evt) => {
+      if (evt.isSeriesOccurrence && !includeRecurring) return false;
+      const { firstKey, lastKey } = getEventDayRange(evt);
+      return firstKey <= toKey && lastKey >= fromKey && keepEvent(evt);
+    });
+
+    return {
+      events,
+      series: [],
+      exceptions: [],
+      count: events.length,
+      fileLabel: range === 'week' ? `week_${fromKey}` : `${fromKey}_to_${toKey}`,
+      description: `${plural(events.length, 'event')} (${fromKey} to ${toKey})`
+    };
   }
 
   exportBackup() {
