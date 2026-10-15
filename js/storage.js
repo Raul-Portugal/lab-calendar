@@ -85,7 +85,8 @@ export function getInitialSeedData() {
     customProtocols: [],
     settings: {
       use24Hour: false,
-      visibleCategories: ['Meeting', 'Protocol', 'Bench Work', 'Quota Task', 'Instrumentation']
+      // All default categories visible (Lab Operations used to be missing, hiding its events)
+      visibleCategories: ['Meeting', 'Protocol', 'Bench Work', 'Quota Task', 'Instrumentation', 'Lab Operations']
     }
   };
 }

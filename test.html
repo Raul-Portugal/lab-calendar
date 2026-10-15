@@ -486,6 +486,16 @@
         window.fetch = realFetch;
       }
 
+      // 22b. Display settings
+      const { normalizeSettings, DEFAULT_SETTINGS } = await import('./js/state.js');
+      assert(JSON.stringify(normalizeSettings(undefined)) === JSON.stringify(DEFAULT_SETTINGS) && DEFAULT_SETTINGS.workingHoursStart === '09:30' && DEFAULT_SETTINGS.workingHoursEnd === '18:00', 'Default working hours 09:30-18:00, passive steps shown');
+      assert(normalizeSettings({ showPassive: 'no', workingHoursStart: '25:00', use24Hour: true }).showPassive === true && normalizeSettings({ workingHoursStart: '25:00' }).workingHoursStart === '09:30' && normalizeSettings({ use24Hour: true }).use24Hour === true, 'Invalid settings fall back to defaults, valid ones are kept');
+      store.updateSettings({ showPassive: false });
+      const settingsRenderer = new (await import('./js/calendar.js')).CalendarRenderer(document.createElement('div'), store);
+      assert(settingsRenderer.matchesFilters({ title: 'Blocking', stepType: 'passive' }) === false && settingsRenderer.matchesFilters({ title: 'Load gel', stepType: 'active' }) === true, 'Hiding passive steps hides only passive steps');
+      store.updateSettings({ showPassive: true });
+      assert(JSON.parse(localStorage.getItem(TEST_STORAGE_KEY)).settings.showPassive === true, 'Display settings are saved');
+
       // 23. Categories: object-shaped add/update (used to throw TypeError)
       store.categories = JSON.parse(JSON.stringify(store.categories));
       assert(store.addCategory({ name: 'Imaging Core', color: 'cyan' }) === true && store.categories.some(c => c.name === 'Imaging Core' && c.color === 'cyan'), 'addCategory({ name, color }) adds the category');

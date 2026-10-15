@@ -14,6 +14,7 @@ import { SyncManager, SUPABASE_SETUP_SQL } from './sync.js';
 import { sanitizeProtocol, normalizeProtocolCategory, UNCATEGORIZED_PROTOCOLS } from './protocols.js';
 
 const COLLAPSED_PROTOCOL_CATEGORIES_KEY = 'labcal_collapsed_protocol_categories';
+const COLLAPSED_SIDEBAR_SECTIONS_KEY = 'labcal_collapsed_sidebar_sections';
 import {
   formatDateKey,
   getWeekDates,
@@ -347,6 +348,9 @@ class LabCalendarApp {
       this.exportDropdown.classList.add('hidden');
     });
 
+    this.initSidebarSections();
+    this.initDisplayOptions();
+
     this.initEventEditModal();
     this.initQuotaModal();
     this.initQuickClassModal();
@@ -354,7 +358,96 @@ class LabCalendarApp {
     this.initSeriesPromptModal();
   }
 
+  /**
+   * Every sidebar section folds by clicking (or Enter/Space on) its header.
+   * Folded sections are a per-device preference (not synced).
+   */
+  initSidebarSections() {
+    let collapsed = new Set();
+    try {
+      collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_SIDEBAR_SECTIONS_KEY) || '[]'));
+    } catch (e) {}
+
+    const apply = (section, isCollapsed) => {
+      section.classList.toggle('is-collapsed', isCollapsed);
+      section.querySelector('.sidebar-section-header')?.setAttribute('aria-expanded', String(!isCollapsed));
+    };
+
+    document.querySelectorAll('.sidebar-section[data-section]').forEach((section) => {
+      const id = section.dataset.section;
+      const header = section.querySelector('.sidebar-section-header');
+      apply(section, collapsed.has(id));
+
+      const toggle = () => {
+        if (collapsed.has(id)) collapsed.delete(id);
+        else collapsed.add(id);
+        apply(section, collapsed.has(id));
+        try {
+          localStorage.setItem(COLLAPSED_SIDEBAR_SECTIONS_KEY, JSON.stringify([...collapsed]));
+        } catch (e) {}
+      };
+
+      header?.addEventListener('click', (e) => {
+        // Header buttons (+ Add, Import...) keep working without folding the section
+        if (e.target.closest('button, input, a')) return;
+        toggle();
+      });
+      header?.addEventListener('keydown', (e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target === header) {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    });
+  }
+
+  initDisplayOptions() {
+    this.showPassiveToggle = document.getElementById('showPassiveToggle');
+    this.highlightWorkingHoursToggle = document.getElementById('highlightWorkingHoursToggle');
+    this.workingHoursStartInput = document.getElementById('workingHoursStart');
+    this.workingHoursEndInput = document.getElementById('workingHoursEnd');
+
+    this.showPassiveToggle?.addEventListener('change', () => {
+      store.updateSettings({ showPassive: this.showPassiveToggle.checked });
+      this.showToast(this.showPassiveToggle.checked ? 'Showing passive steps' : 'Passive steps hidden');
+    });
+    this.highlightWorkingHoursToggle?.addEventListener('change', () => {
+      store.updateSettings({ highlightWorkingHours: this.highlightWorkingHoursToggle.checked });
+    });
+
+    const saveWorkingHours = () => {
+      const start = this.workingHoursStartInput.value;
+      const end = this.workingHoursEndInput.value;
+      if (!start || !end || timeToMinutes(end) <= timeToMinutes(start)) {
+        alert('Working hours must end after they start.');
+        this.syncDisplayControls();
+        return;
+      }
+      store.updateSettings({ workingHoursStart: start, workingHoursEnd: end });
+    };
+    this.workingHoursStartInput?.addEventListener('change', saveWorkingHours);
+    this.workingHoursEndInput?.addEventListener('change', saveWorkingHours);
+
+    this.syncDisplayControls();
+  }
+
+  // Reflect settings in the Display controls (also after a cloud sync or another tab)
+  syncDisplayControls() {
+    const s = store.settings;
+    if (this.showPassiveToggle) this.showPassiveToggle.checked = s.showPassive !== false;
+    if (this.highlightWorkingHoursToggle) this.highlightWorkingHoursToggle.checked = s.highlightWorkingHours !== false;
+    if (this.workingHoursStartInput && document.activeElement !== this.workingHoursStartInput) {
+      this.workingHoursStartInput.value = s.workingHoursStart;
+    }
+    if (this.workingHoursEndInput && document.activeElement !== this.workingHoursEndInput) {
+      this.workingHoursEndInput.value = s.workingHoursEnd;
+    }
+  }
+
   onStateChanged(changeType) {
+    if (changeType === 'settings_change' || changeType === 'cloud_pull' || changeType === 'storage_sync' || changeType === 'backup_import') {
+      this.syncDisplayControls();
+    }
     if (changeType === 'date_change') {
       // Keep the mini calendar on the month being viewed
       this.miniDate = new Date(store.currentDate);
@@ -1720,7 +1813,7 @@ class LabCalendarApp {
       quickClasses: store.quickClasses,
       categories: store.categories,
       settings: {
-        use24Hour: store.settings.use24Hour,
+        ...store.settings,
         visibleCategories: Array.from(store.visibleCategories)
       }
     });

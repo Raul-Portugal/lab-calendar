@@ -140,28 +140,41 @@
         </div>
       </div>
 
+      <!-- Every section folds by clicking its header (state remembered per device) -->
+
       <!-- Mini Calendar Datepicker Widget -->
-      <div class="mini-calendar-widget" id="miniCalendarWidget"></div>
+      <div class="sidebar-section" data-section="mini-calendar">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Month</span></div>
+        </div>
+        <div class="sidebar-section-body">
+          <div class="mini-calendar-widget" id="miniCalendarWidget"></div>
+        </div>
+      </div>
 
       <!-- Weekly Quotas & Flexible Tasks Section -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
+      <div class="sidebar-section" data-section="quotas">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
           <div class="sidebar-section-title">
+            <span class="section-chevron">▾</span>
             <span>Weekly Quotas</span>
             <span class="section-badge" id="quotaCountBadge">3</span>
           </div>
           <button class="section-action-btn" id="addQuotaLinkBtn">+ Add</button>
         </div>
-        <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
-          Drag into calendar to allocate hours. Progress updates dynamically.
-        </p>
-        <div class="quotas-list" id="sidebarQuotasList"></div>
+        <div class="sidebar-section-body">
+          <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
+            Drag into calendar to allocate hours. Progress updates dynamically.
+          </p>
+          <div class="quotas-list" id="sidebarQuotasList"></div>
+        </div>
       </div>
 
       <!-- Protocol Templates Library Section -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
+      <div class="sidebar-section" data-section="protocols">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
           <div class="sidebar-section-title">
+            <span class="section-chevron">▾</span>
             <span>Lab Protocols</span>
             <span class="section-badge" id="protocolCountBadge">4</span>
           </div>
@@ -170,28 +183,57 @@
             <button class="section-action-btn" id="buildProtocolLinkBtn">+ Build</button>
           </div>
         </div>
-        <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
-          Drag to schedule all chained multi-day steps. Hold Shift to move group. Click a category to fold it.
-        </p>
-        <div class="protocols-list" id="sidebarProtocolsList"></div>
+        <div class="sidebar-section-body">
+          <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
+            Drag to schedule all chained multi-day steps. Hold Shift to move group. Click a category to fold it.
+          </p>
+          <div class="protocols-list" id="sidebarProtocolsList"></div>
+        </div>
       </div>
 
       <!-- Quick Event Classes (Single Drag Chips) -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
-          <div class="sidebar-section-title">Quick Event Classes</div>
+      <div class="sidebar-section" data-section="quick-classes">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Quick Event Classes</span></div>
           <button class="section-action-btn" id="addQuickClassLinkBtn">+ New</button>
         </div>
-        <div class="event-classes-grid" id="sidebarEventClassesGrid"></div>
+        <div class="sidebar-section-body">
+          <div class="event-classes-grid" id="sidebarEventClassesGrid"></div>
+        </div>
       </div>
 
       <!-- Category Filter Toggles -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
-          <div class="sidebar-section-title">Filter Calendars</div>
+      <div class="sidebar-section" data-section="filters">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Filter Calendars</span></div>
           <button class="section-action-btn" id="addCategoryLinkBtn">+ New</button>
         </div>
-        <div class="category-filters-list" id="sidebarCategoryFilters"></div>
+        <div class="sidebar-section-body">
+          <div class="category-filters-list" id="sidebarCategoryFilters"></div>
+        </div>
+      </div>
+
+      <!-- Display Options -->
+      <div class="sidebar-section" data-section="display">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Display</span></div>
+        </div>
+        <div class="sidebar-section-body display-options">
+          <label class="display-option">
+            <input type="checkbox" id="showPassiveToggle" checked>
+            <span>Show passive / incubation steps</span>
+          </label>
+          <label class="display-option">
+            <input type="checkbox" id="highlightWorkingHoursToggle" checked>
+            <span>Shade outside working hours</span>
+          </label>
+          <div class="display-option working-hours-row">
+            <span>Working hours</span>
+            <input type="time" class="input-sm" id="workingHoursStart" value="09:30" step="900" aria-label="Working hours start">
+            <span>–</span>
+            <input type="time" class="input-sm" id="workingHoursEnd" value="18:00" step="900" aria-label="Working hours end">
+          </div>
+        </div>
       </div>
     </aside>
 

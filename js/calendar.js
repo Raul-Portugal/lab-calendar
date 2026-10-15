@@ -187,6 +187,22 @@ export class CalendarRenderer {
         dayColumn.appendChild(hourRow);
       }
 
+      // Subtle shading outside working hours (informational only: events can go anywhere)
+      if (this.store.settings.highlightWorkingHours) {
+        const workStart = timeToMinutes(this.store.settings.workingHoursStart);
+        const workEnd = timeToMinutes(this.store.settings.workingHoursEnd);
+        if (workEnd > workStart) {
+          [[0, workStart], [workEnd, MINUTES_PER_DAY]].forEach(([from, to]) => {
+            if (to <= from) return;
+            const shade = document.createElement('div');
+            shade.className = 'off-hours-shade';
+            shade.style.top = `${from}px`;
+            shade.style.height = `${to - from}px`;
+            dayColumn.appendChild(shade);
+          });
+        }
+      }
+
       // Render Current Time Indicator if today
       if (isCurrentDay) {
         const timeLine = document.createElement('div');
@@ -402,6 +418,7 @@ export class CalendarRenderer {
    * category are hidden (events whose category was deleted stay visible).
    */
   matchesFilters(evt) {
+    if (evt.stepType === 'passive' && this.store.settings.showPassive === false) return false;
     const q = this.store.searchQuery;
     if (q) {
       const haystack = [evt.title, evt.protocolName, evt.notes]

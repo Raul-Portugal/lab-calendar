@@ -23,6 +23,30 @@ const VIEW_ONLY_CHANGES = new Set(['date_change', 'view_change', 'hover_change']
 // Notifications whose data did not originate from a local user edit (no cloud push)
 const NON_LOCAL_CHANGES = new Set(['storage_sync', 'cloud_pull', 'filter_change', ...VIEW_ONLY_CHANGES]);
 
+export const DEFAULT_SETTINGS = {
+  use24Hour: false,
+  showPassive: true,
+  highlightWorkingHours: true,
+  workingHoursStart: '09:30',
+  workingHoursEnd: '18:00'
+};
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// Known settings with valid values; anything missing or invalid falls back to base
+export function normalizeSettings(raw = {}, base = DEFAULT_SETTINGS) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const bool = (key) => (typeof source[key] === 'boolean' ? source[key] : base[key]);
+  const time = (key) => (TIME_PATTERN.test(source[key]) ? source[key] : base[key]);
+  return {
+    use24Hour: bool('use24Hour'),
+    showPassive: bool('showPassive'),
+    highlightWorkingHours: bool('highlightWorkingHours'),
+    workingHoursStart: time('workingHoursStart'),
+    workingHoursEnd: time('workingHoursEnd')
+  };
+}
+
 /**
  * True when a notification represents a local edit of calendar data that
  * should be marked as unsynced and pushed to the cloud.
@@ -64,7 +88,7 @@ class StateStore {
     this.deletedProtocolIds = new Set(loaded.deletedProtocolIds || []);
     this.quickClasses = loaded.quickClasses || DEFAULT_QUICK_CLASSES;
     this.categories = loaded.categories || DEFAULT_CATEGORIES;
-    this.settings = loaded.settings || { use24Hour: false };
+    this.settings = normalizeSettings(loaded.settings);
     
     this.selectedEventId = null;
     this.hoveredProtocolGroupId = null;
@@ -104,7 +128,7 @@ class StateStore {
     if (Array.isArray(data.quickClasses)) this.quickClasses = data.quickClasses;
     if (Array.isArray(data.categories)) this.categories = data.categories;
     if (data.settings && typeof data.settings === 'object') {
-      this.settings = { ...this.settings, use24Hour: Boolean(data.settings.use24Hour) };
+      this.settings = normalizeSettings(data.settings, this.settings);
       if (Array.isArray(data.settings.visibleCategories)) {
         this.visibleCategories = new Set(data.settings.visibleCategories);
       }
@@ -137,10 +161,16 @@ class StateStore {
       quickClasses: this.quickClasses,
       categories: this.categories,
       settings: {
-        use24Hour: this.settings.use24Hour,
+        ...this.settings,
         visibleCategories: Array.from(this.visibleCategories)
       }
     });
+  }
+
+  // Display preferences (passive steps, working hours). Synced like other data.
+  updateSettings(partial) {
+    this.settings = normalizeSettings({ ...this.settings, ...partial }, this.settings);
+    this.notify('settings_change');
   }
 
   // Push snapshot strictly on user action completion (e.g. pointerup)

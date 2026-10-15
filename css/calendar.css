@@ -167,6 +167,16 @@
   border-right: none;
 }
 
+/* Hours outside the working day: a light tint behind events, clicks pass through */
+.off-hours-shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background-color: rgba(60, 64, 67, 0.045);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .cal-day-column.is-today-col {
   background-color: rgba(232, 240, 254, 0.08);
 }
