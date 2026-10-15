@@ -14,6 +14,7 @@ import { SyncManager, SUPABASE_SETUP_SQL } from './sync.js';
 import { sanitizeProtocol, normalizeProtocolCategory, UNCATEGORIZED_PROTOCOLS } from './protocols.js';
 
 const COLLAPSED_PROTOCOL_CATEGORIES_KEY = 'labcal_collapsed_protocol_categories';
+const COLLAPSED_SIDEBAR_SECTIONS_KEY = 'labcal_collapsed_sidebar_sections';
 import {
   formatDateKey,
   getWeekDates,
@@ -31,7 +32,8 @@ import {
   isAllDayEvent,
   toAbsMinutes,
   shiftDateKey,
-  calculateDaysBetween
+  calculateDaysBetween,
+  getEventDayRange
 } from './utils.js';
 
 class LabCalendarApp {
@@ -238,10 +240,7 @@ class LabCalendarApp {
     this.addCategoryLinkBtn?.addEventListener('click', () => this.openCategoryModal());
 
     // Direct 1-Click GCal export button
-    this.directGcalBtn?.addEventListener('click', () => {
-      exportToIcs(store.events, store.series, store.exceptions);
-      this.showToast('Downloaded lab_calendar.ics! In Google Calendar: Settings -> Import & export -> Import this file.');
-    });
+    this.directGcalBtn?.addEventListener('click', () => this.openIcsExportModal());
 
     // Export dropdown menu
     this.exportMenuBtn?.addEventListener('click', (e) => {
@@ -251,8 +250,7 @@ class LabCalendarApp {
 
     this.exportIcsBtn?.addEventListener('click', () => {
       this.exportDropdown.classList.add('hidden');
-      exportToIcs(store.events, store.series, store.exceptions);
-      this.showToast('Exported RFC 5545 iCalendar (.ics) with recurring rules.');
+      this.openIcsExportModal();
     });
 
     this.exportJsonBtn?.addEventListener('click', () => {
@@ -347,6 +345,10 @@ class LabCalendarApp {
       this.exportDropdown.classList.add('hidden');
     });
 
+    this.initSidebarSections();
+    this.initDisplayOptions();
+    this.initIcsExportModal();
+
     this.initEventEditModal();
     this.initQuotaModal();
     this.initQuickClassModal();
@@ -354,7 +356,96 @@ class LabCalendarApp {
     this.initSeriesPromptModal();
   }
 
+  /**
+   * Every sidebar section folds by clicking (or Enter/Space on) its header.
+   * Folded sections are a per-device preference (not synced).
+   */
+  initSidebarSections() {
+    let collapsed = new Set();
+    try {
+      collapsed = new Set(JSON.parse(localStorage.getItem(COLLAPSED_SIDEBAR_SECTIONS_KEY) || '[]'));
+    } catch (e) {}
+
+    const apply = (section, isCollapsed) => {
+      section.classList.toggle('is-collapsed', isCollapsed);
+      section.querySelector('.sidebar-section-header')?.setAttribute('aria-expanded', String(!isCollapsed));
+    };
+
+    document.querySelectorAll('.sidebar-section[data-section]').forEach((section) => {
+      const id = section.dataset.section;
+      const header = section.querySelector('.sidebar-section-header');
+      apply(section, collapsed.has(id));
+
+      const toggle = () => {
+        if (collapsed.has(id)) collapsed.delete(id);
+        else collapsed.add(id);
+        apply(section, collapsed.has(id));
+        try {
+          localStorage.setItem(COLLAPSED_SIDEBAR_SECTIONS_KEY, JSON.stringify([...collapsed]));
+        } catch (e) {}
+      };
+
+      header?.addEventListener('click', (e) => {
+        // Header buttons (+ Add, Import...) keep working without folding the section
+        if (e.target.closest('button, input, a')) return;
+        toggle();
+      });
+      header?.addEventListener('keydown', (e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target === header) {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    });
+  }
+
+  initDisplayOptions() {
+    this.showPassiveToggle = document.getElementById('showPassiveToggle');
+    this.highlightWorkingHoursToggle = document.getElementById('highlightWorkingHoursToggle');
+    this.workingHoursStartInput = document.getElementById('workingHoursStart');
+    this.workingHoursEndInput = document.getElementById('workingHoursEnd');
+
+    this.showPassiveToggle?.addEventListener('change', () => {
+      store.updateSettings({ showPassive: this.showPassiveToggle.checked });
+      this.showToast(this.showPassiveToggle.checked ? 'Showing passive steps' : 'Passive steps hidden');
+    });
+    this.highlightWorkingHoursToggle?.addEventListener('change', () => {
+      store.updateSettings({ highlightWorkingHours: this.highlightWorkingHoursToggle.checked });
+    });
+
+    const saveWorkingHours = () => {
+      const start = this.workingHoursStartInput.value;
+      const end = this.workingHoursEndInput.value;
+      if (!start || !end || timeToMinutes(end) <= timeToMinutes(start)) {
+        alert('Working hours must end after they start.');
+        this.syncDisplayControls();
+        return;
+      }
+      store.updateSettings({ workingHoursStart: start, workingHoursEnd: end });
+    };
+    this.workingHoursStartInput?.addEventListener('change', saveWorkingHours);
+    this.workingHoursEndInput?.addEventListener('change', saveWorkingHours);
+
+    this.syncDisplayControls();
+  }
+
+  // Reflect settings in the Display controls (also after a cloud sync or another tab)
+  syncDisplayControls() {
+    const s = store.settings;
+    if (this.showPassiveToggle) this.showPassiveToggle.checked = s.showPassive !== false;
+    if (this.highlightWorkingHoursToggle) this.highlightWorkingHoursToggle.checked = s.highlightWorkingHours !== false;
+    if (this.workingHoursStartInput && document.activeElement !== this.workingHoursStartInput) {
+      this.workingHoursStartInput.value = s.workingHoursStart;
+    }
+    if (this.workingHoursEndInput && document.activeElement !== this.workingHoursEndInput) {
+      this.workingHoursEndInput.value = s.workingHoursEnd;
+    }
+  }
+
   onStateChanged(changeType) {
+    if (changeType === 'settings_change' || changeType === 'cloud_pull' || changeType === 'storage_sync' || changeType === 'backup_import') {
+      this.syncDisplayControls();
+    }
     if (changeType === 'date_change') {
       // Keep the mini calendar on the month being viewed
       this.miniDate = new Date(store.currentDate);
@@ -1709,6 +1800,135 @@ class LabCalendarApp {
     this.cloudSyncModal?.classList.add('hidden');
   }
 
+  /**
+   * Export to Google Calendar: a week, a date range or everything, with or without
+   * passive steps / recurring events / hidden categories.
+   */
+  initIcsExportModal() {
+    this.icsModal = document.getElementById('icsExportModal');
+    if (!this.icsModal) return;
+    this.icsWeekDate = document.getElementById('icsWeekDate');
+    this.icsWeekLabel = document.getElementById('icsWeekLabel');
+    this.icsFromDate = document.getElementById('icsFromDate');
+    this.icsToDate = document.getElementById('icsToDate');
+    this.icsIncludePassive = document.getElementById('icsIncludePassive');
+    this.icsIncludeRecurring = document.getElementById('icsIncludeRecurring');
+    this.icsOnlyVisible = document.getElementById('icsOnlyVisible');
+    this.icsSummary = document.getElementById('icsExportSummary');
+
+    const close = () => this.icsModal.classList.add('hidden');
+    document.getElementById('icsExportCloseBtn')?.addEventListener('click', close);
+    document.getElementById('icsExportCancelBtn')?.addEventListener('click', close);
+
+    // Picking a date selects the matching range option
+    this.icsWeekDate.addEventListener('change', () => this.setIcsRange('week'));
+    [this.icsFromDate, this.icsToDate].forEach((input) => input.addEventListener('change', () => this.setIcsRange('custom')));
+    this.icsModal.querySelectorAll('input').forEach((input) => input.addEventListener('change', () => this.updateIcsSummary()));
+
+    document.getElementById('icsExportDownloadBtn')?.addEventListener('click', () => {
+      const result = this.computeIcsExport();
+      if (result.error) {
+        alert(result.error);
+        return;
+      }
+      if (result.count === 0) {
+        alert('Nothing to export with these options.');
+        return;
+      }
+      exportToIcs(result.events, result.series, result.exceptions, result.fileLabel);
+      close();
+      this.showToast(`Downloaded ${result.description}. In Google Calendar: Settings → Import & export → Import.`);
+    });
+  }
+
+  openIcsExportModal() {
+    const weekDates = getWeekDates(store.currentDate);
+    this.icsWeekDate.value = formatDateKey(store.currentDate);
+    this.icsFromDate.value = formatDateKey(weekDates[0]);
+    this.icsToDate.value = formatDateKey(weekDates[6]);
+    this.icsIncludePassive.checked = store.settings.showPassive !== false;
+    this.icsIncludeRecurring.checked = true;
+    this.icsOnlyVisible.checked = true;
+    this.setIcsRange('week');
+    this.icsModal.classList.remove('hidden');
+  }
+
+  setIcsRange(value) {
+    const radio = this.icsModal.querySelector(`input[name="icsRange"][value="${value}"]`);
+    if (radio) radio.checked = true;
+    this.updateIcsSummary();
+  }
+
+  updateIcsSummary() {
+    const weekStart = getWeekDates(parseDateKey(this.icsWeekDate.value || formatDateKey(store.currentDate)))[0];
+    const weekEnd = parseDateKey(shiftDateKey(formatDateKey(weekStart), 6));
+    const short = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    this.icsWeekLabel.textContent = `(${short(weekStart)} – ${short(weekEnd)})`;
+
+    const result = this.computeIcsExport();
+    this.icsSummary.textContent = result.error ? result.error : `Will export: ${result.description}`;
+  }
+
+  // Events / series to export for the dialog's current options
+  computeIcsExport() {
+    const range = this.icsModal.querySelector('input[name="icsRange"]:checked')?.value || 'week';
+    const includePassive = this.icsIncludePassive.checked;
+    const includeRecurring = this.icsIncludeRecurring.checked;
+    const onlyVisible = this.icsOnlyVisible.checked;
+
+    const categoryShown = (category) => !onlyVisible || !category ||
+      store.visibleCategories.has(category) || !store.categories.some((c) => c.name === category);
+    const keepEvent = (evt) => (includePassive || evt.stepType !== 'passive') && categoryShown(evt.category);
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    if (range === 'all') {
+      const events = store.events.filter(keepEvent);
+      const series = includeRecurring ? store.series.filter((s) => categoryShown(s.category)) : [];
+      const seriesIds = new Set(series.map((s) => s.id));
+      const exceptions = store.exceptions.filter((e) => seriesIds.has(e.seriesId));
+      return {
+        events,
+        series,
+        exceptions,
+        count: events.length + series.length,
+        fileLabel: `all_${formatDateKey(new Date())}`,
+        description: `${plural(events.length, 'event')}${series.length ? ` + ${series.length} recurring series` : ''}`
+      };
+    }
+
+    let fromKey;
+    let toKey;
+    if (range === 'week') {
+      fromKey = formatDateKey(getWeekDates(parseDateKey(this.icsWeekDate.value || formatDateKey(store.currentDate)))[0]);
+      toKey = shiftDateKey(fromKey, 6);
+    } else {
+      fromKey = this.icsFromDate.value;
+      toKey = this.icsToDate.value;
+      if (!fromKey || !toKey) return { error: 'Choose a start and an end date.', count: 0 };
+      if (toKey < fromKey) return { error: 'The end date must be on or after the start date.', count: 0 };
+      if (calculateDaysBetween(fromKey, toKey) > 366) return { error: 'Choose a range of at most one year (or "Everything").', count: 0 };
+    }
+
+    const dateKeys = [];
+    for (let key = fromKey; key <= toKey; key = shiftDateKey(key, 1)) dateKeys.push(key);
+
+    // Recurring events become single events on their dates in this range
+    const events = store.getExpandedEventsForRange(dateKeys).filter((evt) => {
+      if (evt.isSeriesOccurrence && !includeRecurring) return false;
+      const { firstKey, lastKey } = getEventDayRange(evt);
+      return firstKey <= toKey && lastKey >= fromKey && keepEvent(evt);
+    });
+
+    return {
+      events,
+      series: [],
+      exceptions: [],
+      count: events.length,
+      fileLabel: range === 'week' ? `week_${fromKey}` : `${fromKey}_to_${toKey}`,
+      description: `${plural(events.length, 'event')} (${fromKey} to ${toKey})`
+    };
+  }
+
   exportBackup() {
     exportStateToJson({
       series: store.series,
@@ -1720,7 +1940,7 @@ class LabCalendarApp {
       quickClasses: store.quickClasses,
       categories: store.categories,
       settings: {
-        use24Hour: store.settings.use24Hour,
+        ...store.settings,
         visibleCategories: Array.from(store.visibleCategories)
       }
     });

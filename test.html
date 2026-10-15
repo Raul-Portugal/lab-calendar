@@ -486,6 +486,16 @@
         window.fetch = realFetch;
       }
 
+      // 22b. Display settings
+      const { normalizeSettings, DEFAULT_SETTINGS } = await import('./js/state.js');
+      assert(JSON.stringify(normalizeSettings(undefined)) === JSON.stringify(DEFAULT_SETTINGS) && DEFAULT_SETTINGS.workingHoursStart === '09:30' && DEFAULT_SETTINGS.workingHoursEnd === '18:00', 'Default working hours 09:30-18:00, passive steps shown');
+      assert(normalizeSettings({ showPassive: 'no', workingHoursStart: '25:00', use24Hour: true }).showPassive === true && normalizeSettings({ workingHoursStart: '25:00' }).workingHoursStart === '09:30' && normalizeSettings({ use24Hour: true }).use24Hour === true, 'Invalid settings fall back to defaults, valid ones are kept');
+      store.updateSettings({ showPassive: false });
+      const settingsRenderer = new (await import('./js/calendar.js')).CalendarRenderer(document.createElement('div'), store);
+      assert(settingsRenderer.matchesFilters({ title: 'Blocking', stepType: 'passive' }) === false && settingsRenderer.matchesFilters({ title: 'Load gel', stepType: 'active' }) === true, 'Hiding passive steps hides only passive steps');
+      store.updateSettings({ showPassive: true });
+      assert(JSON.parse(localStorage.getItem(TEST_STORAGE_KEY)).settings.showPassive === true, 'Display settings are saved');
+
       // 23. Categories: object-shaped add/update (used to throw TypeError)
       store.categories = JSON.parse(JSON.stringify(store.categories));
       assert(store.addCategory({ name: 'Imaging Core', color: 'cyan' }) === true && store.categories.some(c => c.name === 'Imaging Core' && c.color === 'cyan'), 'addCategory({ name, color }) adds the category');
@@ -553,6 +563,30 @@
       const halves = store.events.filter(e => e.title.startsWith('20 h incubation'));
       assert(halves.length === 2 && halves[0].endDateKey === '2026-10-16' && halves[0].endTime === '05:00' && halves[1].startTime === '05:00', 'Splitting an overnight step splits its full 20 h span');
 
+      // 25b. Overlapping steps ("during previous") and earliest start times
+      const overlapProto = { id: 'p_ov', name: 'Overlap', steps: [
+        { title: 'Blocking', durationMinutes: 60, anchorType: 'after-previous', stepType: 'passive' },
+        { title: 'Prepare buffer', durationMinutes: 20, anchorType: 'during-previous', offsetMinutes: 30, stepType: 'active' },
+        { title: 'Wash', durationMinutes: 30, anchorType: 'after-previous', gapMinutes: 0, stepType: 'active' }
+      ] };
+      const ov = instantiateProtocol(overlapProto, '2026-10-15', 9 * 60).events;
+      assert(ov[1].startTime === '09:30' && ov[1].endTime === '09:50', '"During previous" step starts 30 min into the incubation');
+      assert(ov[2].startTime === '10:00', 'Next "after previous" step waits for the incubation to finish (10:00), not just the overlapping step (09:50)');
+      assert(ov[1].overlapsPrevious === true && checkProtocolChainIntegrity(ov, ov[0].protocolGroupId).size === 0, 'A planned overlap is not flagged as a sequence conflict');
+      const unplanned = JSON.parse(JSON.stringify(ov)); delete unplanned[1].overlapsPrevious;
+      assert(checkProtocolChainIntegrity(unplanned, unplanned[0].protocolGroupId).has(unplanned[1].id), 'An unplanned overlap is still flagged');
+      const nightProto = { id: 'p_nb', name: 'Night', steps: [
+        { title: 'Setup', durationMinutes: 60, anchorType: 'after-previous', stepType: 'active' },
+        { title: 'Overnight incubation', durationMinutes: 16 * 60, anchorType: 'after-previous', stepType: 'passive' },
+        { title: 'Harvest', durationMinutes: 45, anchorType: 'after-previous', notBefore: '09:30', stepType: 'active' }
+      ] };
+      const night = instantiateProtocol(nightProto, '2026-10-15', 13 * 60).events;
+      assert(night[1].endDateKey === '2026-10-16' && night[1].endTime === '06:00' && night[2].dateKey === '2026-10-16' && night[2].startTime === '09:30', 'Overnight incubation ends 06:00; the next step waits until its earliest start 09:30');
+      const evening = instantiateProtocol(nightProto, '2026-10-15', 3 * 60).events;
+      assert(evening[2].dateKey === '2026-10-15' && evening[2].startTime === '20:00', 'Earliest start does not delay a step that is already later in the day');
+      const sanitizedOverlap = sanitizeProtocol({ name: 'x', steps: [{ title: 'a' }, { title: 'b', anchorType: 'during-previous', offsetMinutes: '45', notBefore: '09:30' }, { title: 'c', notBefore: '9:30am' }] });
+      assert(sanitizedOverlap.steps[1].anchorType === 'during-previous' && sanitizedOverlap.steps[1].offsetMinutes === 45 && sanitizedOverlap.steps[1].notBefore === '09:30' && sanitizedOverlap.steps[2].notBefore === '', 'Imported files keep overlap / earliest-start fields and reject malformed times');
+
       // 26. Ctrl+resize cascades only the steps AFTER the resized one
       store.events = JSON.parse(JSON.stringify(instantiated.events));
       const step3 = store.events[2];
@@ -596,6 +630,9 @@
       assert(ics.includes('UNTIL=20261231T235959\r\n') || ics.includes('UNTIL=20261231T235959'), 'ICS: UNTIL is floating like DTSTART');
       assert(!ics.includes('T235959Z'), 'ICS: no UTC UNTIL with floating DTSTART');
       assert(ics.includes('DTSTART:20261002T150000'), 'ICS: DTSTART is the first real occurrence (Fri Oct 2), not the range start');
+      const occurrenceIcs = buildIcsContent([{ id: 'sx_2026-10-09', seriesId: 'sx', occurrenceDate: '2026-10-09', isSeriesOccurrence: true, title: 'Seminar', dateKey: '2026-10-09', startTime: '15:00', endTime: '16:00' }]);
+      assert(occurrenceIcs.includes('UID:series-sx-2026-10-09@labcalendar.app') && occurrenceIcs.includes('DTSTART:20261009T150000') && !occurrenceIcs.includes('RRULE'), 'ICS: a single occurrence (week export) is a one-off event with a stable per-date UID');
+      assert(occurrenceIcs.includes('X-WR-CALNAME:LabCal'), 'ICS: suggests the calendar name "LabCal"');
       const multiByte = 'DESCRIPTION:' + 'Add 5 µL at 4°C. '.repeat(10);
       const foldedMb = foldIcsLine(multiByte).split('\r\n');
       const enc = new TextEncoder();

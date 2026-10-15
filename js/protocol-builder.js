@@ -158,6 +158,8 @@ export class ProtocolBuilder {
       durationMinutes: 45,
       anchorType: 'after-previous',
       gapMinutes: 15,
+      offsetMinutes: 0,
+      notBefore: '',
       dayOffset: 0,
       anchorTime: '09:00',
       stepType: 'active',
@@ -223,10 +225,21 @@ export class ProtocolBuilder {
     }, 150);
   }
 
+  // Default "earliest start": the start of the working day from the Display settings
+  defaultEarliestStart() {
+    return this.store.settings?.workingHoursStart || '09:30';
+  }
+
   stepSummary(step) {
-    const timing = step.anchorType === 'day-anchored'
-      ? `Day ${(step.dayOffset || 0) + 1} at ${step.anchorTime || '09:00'}`
-      : (step.gapMinutes ? `${formatDuration(step.gapMinutes)} after previous` : 'right after previous');
+    let timing;
+    if (step.anchorType === 'day-anchored') {
+      timing = `Day ${(step.dayOffset || 0) + 1} at ${step.anchorTime || '09:00'}`;
+    } else if (step.anchorType === 'during-previous') {
+      timing = step.offsetMinutes ? `${formatDuration(step.offsetMinutes)} into previous` : 'together with previous';
+    } else {
+      timing = step.gapMinutes ? `${formatDuration(step.gapMinutes)} after previous` : 'right after previous';
+    }
+    if (step.notBefore && step.anchorType !== 'day-anchored') timing += `, not before ${step.notBefore}`;
     return `${formatDuration(step.durationMinutes)} • ${timing}`;
   }
 
@@ -257,7 +270,8 @@ export class ProtocolBuilder {
     stepRow.dataset.stepId = step.id;
     stepRow.dataset.index = idx;
 
-    const isAnchored = step.anchorType === 'day-anchored';
+    // The first step can't overlap a previous one
+    const anchorType = step.anchorType === 'during-previous' && idx === 0 ? 'after-previous' : (step.anchorType || 'after-previous');
 
     stepRow.innerHTML = `
       <div class="step-card-header">
@@ -285,14 +299,15 @@ export class ProtocolBuilder {
         </div>
 
         <div class="form-group">
-          <label>Timing Model</label>
+          <label>Starts</label>
           <select class="input-sm step-anchor-type-select">
-            <option value="after-previous" ${!isAnchored ? 'selected' : ''}>After Previous Step</option>
-            <option value="day-anchored" ${isAnchored ? 'selected' : ''}>Anchor to Specific Day & Time</option>
+            <option value="after-previous" ${anchorType === 'after-previous' ? 'selected' : ''}>After previous step(s) finish</option>
+            <option value="during-previous" ${anchorType === 'during-previous' ? 'selected' : ''} ${idx === 0 ? 'disabled' : ''}>During previous step (overlap)</option>
+            <option value="day-anchored" ${anchorType === 'day-anchored' ? 'selected' : ''}>On a specific day & time</option>
           </select>
         </div>
 
-        ${isAnchored ? `
+        ${anchorType === 'day-anchored' ? `
           <div class="form-group">
             <label>Day</label>
             <input type="number" class="input-sm step-day-input" min="1" max="${MAX_DAY_OFFSET + 1}" step="1" inputmode="numeric" value="${(step.dayOffset || 0) + 1}" />
@@ -302,9 +317,23 @@ export class ProtocolBuilder {
             <input type="time" class="input-sm step-anchor-time-input" value="${escapeHtml(step.anchorTime || '09:00')}" />
           </div>
         ` : `
+          ${anchorType === 'during-previous' ? `
+            <div class="form-group">
+              <label>Starts after previous step begins</label>
+              ${durationInputsHtml('step-offset-input', step.offsetMinutes || 0)}
+            </div>
+          ` : `
+            <div class="form-group">
+              <label>Wait Before</label>
+              ${durationInputsHtml('step-gap-input', step.gapMinutes || 0)}
+            </div>
+          `}
           <div class="form-group">
-            <label>Wait Before</label>
-            ${durationInputsHtml('step-gap-input', step.gapMinutes || 0)}
+            <label class="not-before-label" title="If the step would start earlier in the day (e.g. right after an overnight incubation ending at 06:00), it waits until this time">
+              <input type="checkbox" class="step-not-before-toggle" ${step.notBefore ? 'checked' : ''} />
+              Earliest start
+            </label>
+            <input type="time" class="input-sm step-not-before-input" value="${escapeHtml(step.notBefore || this.defaultEarliestStart())}" ${step.notBefore ? '' : 'disabled'} />
           </div>
         `}
 
@@ -365,6 +394,24 @@ export class ProtocolBuilder {
       updateSummary();
       this.renderTimelinePreview();
     });
+
+    const offsetWrapper = stepRow.querySelector('.step-offset-input');
+    offsetWrapper?.addEventListener('change', () => {
+      step.offsetMinutes = readDurationInputs(offsetWrapper, 0, 0);
+      updateSummary();
+      this.renderTimelinePreview();
+    });
+
+    const notBeforeToggle = stepRow.querySelector('.step-not-before-toggle');
+    const notBeforeInput = stepRow.querySelector('.step-not-before-input');
+    const updateNotBefore = () => {
+      notBeforeInput.disabled = !notBeforeToggle.checked;
+      step.notBefore = notBeforeToggle.checked ? (notBeforeInput.value || this.defaultEarliestStart()) : '';
+      updateSummary();
+      this.renderTimelinePreview();
+    };
+    notBeforeToggle?.addEventListener('change', updateNotBefore);
+    notBeforeInput?.addEventListener('change', updateNotBefore);
 
     const durationWrapper = stepRow.querySelector('.step-duration-input');
     durationWrapper.addEventListener('change', () => {

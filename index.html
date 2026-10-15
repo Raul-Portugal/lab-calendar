@@ -93,7 +93,7 @@
         <div class="create-menu-dropdown hidden" id="exportDropdown">
           <div class="create-menu-item" id="exportIcsBtn">
             <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"/></svg>
-            Export iCalendar (.ics)
+            Export iCalendar (.ics)...
           </div>
           <div class="create-menu-item" id="exportJsonBtn">
             <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
@@ -140,28 +140,41 @@
         </div>
       </div>
 
+      <!-- Every section folds by clicking its header (state remembered per device) -->
+
       <!-- Mini Calendar Datepicker Widget -->
-      <div class="mini-calendar-widget" id="miniCalendarWidget"></div>
+      <div class="sidebar-section" data-section="mini-calendar">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Month</span></div>
+        </div>
+        <div class="sidebar-section-body">
+          <div class="mini-calendar-widget" id="miniCalendarWidget"></div>
+        </div>
+      </div>
 
       <!-- Weekly Quotas & Flexible Tasks Section -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
+      <div class="sidebar-section" data-section="quotas">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
           <div class="sidebar-section-title">
+            <span class="section-chevron">▾</span>
             <span>Weekly Quotas</span>
             <span class="section-badge" id="quotaCountBadge">3</span>
           </div>
           <button class="section-action-btn" id="addQuotaLinkBtn">+ Add</button>
         </div>
-        <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
-          Drag into calendar to allocate hours. Progress updates dynamically.
-        </p>
-        <div class="quotas-list" id="sidebarQuotasList"></div>
+        <div class="sidebar-section-body">
+          <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
+            Drag into calendar to allocate hours. Progress updates dynamically.
+          </p>
+          <div class="quotas-list" id="sidebarQuotasList"></div>
+        </div>
       </div>
 
       <!-- Protocol Templates Library Section -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
+      <div class="sidebar-section" data-section="protocols">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
           <div class="sidebar-section-title">
+            <span class="section-chevron">▾</span>
             <span>Lab Protocols</span>
             <span class="section-badge" id="protocolCountBadge">4</span>
           </div>
@@ -170,28 +183,57 @@
             <button class="section-action-btn" id="buildProtocolLinkBtn">+ Build</button>
           </div>
         </div>
-        <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
-          Drag to schedule all chained multi-day steps. Hold Shift to move group. Click a category to fold it.
-        </p>
-        <div class="protocols-list" id="sidebarProtocolsList"></div>
+        <div class="sidebar-section-body">
+          <p style="font-size: 11px; color: var(--google-grey-700); line-height: 1.3;">
+            Drag to schedule all chained multi-day steps. Hold Shift to move group. Click a category to fold it.
+          </p>
+          <div class="protocols-list" id="sidebarProtocolsList"></div>
+        </div>
       </div>
 
       <!-- Quick Event Classes (Single Drag Chips) -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
-          <div class="sidebar-section-title">Quick Event Classes</div>
+      <div class="sidebar-section" data-section="quick-classes">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Quick Event Classes</span></div>
           <button class="section-action-btn" id="addQuickClassLinkBtn">+ New</button>
         </div>
-        <div class="event-classes-grid" id="sidebarEventClassesGrid"></div>
+        <div class="sidebar-section-body">
+          <div class="event-classes-grid" id="sidebarEventClassesGrid"></div>
+        </div>
       </div>
 
       <!-- Category Filter Toggles -->
-      <div class="sidebar-section">
-        <div class="sidebar-section-header">
-          <div class="sidebar-section-title">Filter Calendars</div>
+      <div class="sidebar-section" data-section="filters">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Filter Calendars</span></div>
           <button class="section-action-btn" id="addCategoryLinkBtn">+ New</button>
         </div>
-        <div class="category-filters-list" id="sidebarCategoryFilters"></div>
+        <div class="sidebar-section-body">
+          <div class="category-filters-list" id="sidebarCategoryFilters"></div>
+        </div>
+      </div>
+
+      <!-- Display Options -->
+      <div class="sidebar-section" data-section="display">
+        <div class="sidebar-section-header" role="button" tabindex="0" aria-expanded="true">
+          <div class="sidebar-section-title"><span class="section-chevron">▾</span><span>Display</span></div>
+        </div>
+        <div class="sidebar-section-body display-options">
+          <label class="display-option">
+            <input type="checkbox" id="showPassiveToggle" checked>
+            <span>Show passive / incubation steps</span>
+          </label>
+          <label class="display-option">
+            <input type="checkbox" id="highlightWorkingHoursToggle" checked>
+            <span>Shade outside working hours</span>
+          </label>
+          <div class="display-option working-hours-row">
+            <span>Working hours</span>
+            <input type="time" class="input-sm" id="workingHoursStart" value="09:30" step="900" aria-label="Working hours start">
+            <span>–</span>
+            <input type="time" class="input-sm" id="workingHoursEnd" value="18:00" step="900" aria-label="Working hours end">
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -550,6 +592,65 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" id="seriesPromptCancelBtn">Cancel</button>
         <button type="button" class="btn btn-primary" id="seriesPromptConfirmBtn">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export to Google Calendar (.ics) Modal -->
+  <div class="modal-backdrop hidden" id="icsExportModal">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 class="modal-title">Export to Google Calendar (.ics)</h3>
+        <button class="modal-close-btn" id="icsExportCloseBtn">✕</button>
+      </div>
+      <div class="modal-body ics-export-body">
+        <fieldset class="ics-export-group">
+          <legend>What to export</legend>
+          <label class="ics-export-option">
+            <input type="radio" name="icsRange" value="week" checked>
+            <span>Week of</span>
+            <input type="date" class="input-sm" id="icsWeekDate">
+            <span class="ics-range-hint" id="icsWeekLabel"></span>
+          </label>
+          <label class="ics-export-option">
+            <input type="radio" name="icsRange" value="custom">
+            <span>From</span>
+            <input type="date" class="input-sm" id="icsFromDate">
+            <span>to</span>
+            <input type="date" class="input-sm" id="icsToDate">
+          </label>
+          <label class="ics-export-option">
+            <input type="radio" name="icsRange" value="all">
+            <span>Everything (recurring events stay recurring)</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="ics-export-group">
+          <legend>Include</legend>
+          <label class="ics-export-option">
+            <input type="checkbox" id="icsIncludePassive">
+            <span>Passive / incubation steps</span>
+          </label>
+          <label class="ics-export-option">
+            <input type="checkbox" id="icsIncludeRecurring" checked>
+            <span>Recurring events (e.g. lab meeting, seminars)</span>
+          </label>
+          <label class="ics-export-option">
+            <input type="checkbox" id="icsOnlyVisible" checked>
+            <span>Only categories shown in the calendar (Filter Calendars)</span>
+          </label>
+        </fieldset>
+
+        <div class="ics-export-summary" id="icsExportSummary"></div>
+        <p class="ics-export-tip">
+          Google Calendar adds the events from an import but never removes events you deleted in LabCal.
+          Tip: import into a separate calendar (e.g. "LabCal") in Google Calendar; to refresh it,
+          delete that calendar and import a new export.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="icsExportCancelBtn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="icsExportDownloadBtn">Download .ics</button>
       </div>
     </div>
   </div>

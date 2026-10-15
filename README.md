@@ -12,7 +12,9 @@ Inspired by Google Calendar, LabCal provides specialized wet-lab features:
 - **Passive / Incubation Hatched Overlay**: Passive steps (blocking, incubation, gel polymerization) render with a distinctive hatched pattern and allow active benchwork blocks to overlap them.
 - **Recurring Series & Exceptions**: Google Calendar-style recurring events (e.g. Wednesday Lab Meeting) with "This occurrence only" vs "All occurrences" editing.
 - **Weekly Flexible Quotas**: Goal tracking (e.g. Thesis Writing 4h/week) with dynamic calculation, progress bars, and over-scheduling indicators.
-- **RFC 5545 iCalendar (.ics) Export**: Strict CRLF, 75-octet folded iCalendar exporter.
+- **RFC 5545 iCalendar (.ics) Export**: Export a week, a date range or everything, with or without passive steps, recurring events and hidden categories. Google Calendar never removes events on re-import, so import into a dedicated "LabCal" calendar you can delete and re-import.
+- **Overlapping steps & earliest start**: Protocol steps can run during the previous step (e.g. prepare buffer during an incubation) and can have an earliest start time (e.g. not before 09:30 after an overnight incubation).
+- **Display options**: Fold any sidebar section, hide passive steps, and shade the hours outside your working day (default 09:30–18:00).
 - **Protocol Sharing**: Export (⤓ on a protocol) and import (**⤒ Import** in the Lab Protocols header) protocols as `.protocol.json` to share with lab members. Several files, or a file holding a list of protocols, can be imported at once.
 - **Protocol Categories**: The protocol library is grouped into foldable categories (e.g. Protein Analysis, Imaging). Set a protocol's category in the Protocol Builder.
 - **Protocol Files from an LLM**: [`docs/protocol-import-llm-instructions.md`](docs/protocol-import-llm-instructions.md) contains system instructions that turn any protocol document into an importable `.protocol.json`, grouped into sensible active / passive / instrument-run blocks.
