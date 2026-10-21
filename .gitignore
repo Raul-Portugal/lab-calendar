@@ -1,5 +1,9 @@
+# Claude Code: personal / temporary files only (project skills and launch.json are shared)
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+
 # Editor / tooling
-.claude/
 .vscode/
 .idea/
 
