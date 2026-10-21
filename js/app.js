@@ -35,6 +35,7 @@ import {
   calculateDaysBetween,
   getEventDayRange
 } from './utils.js';
+import { normalizeRule, describeRule, untilForCount, DAY_CODES, WEEKDAY_CODES } from './recurrence.js';
 
 class LabCalendarApp {
   constructor() {
@@ -141,8 +142,8 @@ class LabCalendarApp {
       (event) => {
         this.openEventEditModal(event);
       },
-      (seriesObj, occDate, pendingUpdates = null, isDelete = false) => {
-        this.openSeriesPromptModal(seriesObj, occDate, pendingUpdates, isDelete);
+      (seriesObj, occDate, pendingUpdates = null, isDelete = false, action = null) => {
+        this.openSeriesPromptModal(seriesObj, occDate, pendingUpdates, isDelete, action);
       }
     );
   }
@@ -939,6 +940,7 @@ class LabCalendarApp {
         this.editEventEndDateTimed.value = next;
       }
       this.editEventPrevStartDate = next;
+      this.updateRepeatLabels();
     });
     this.editEventStartTimeInput = document.getElementById('editEventStartTime');
     this.editEventEndTimeInput = document.getElementById('editEventEndTime');
@@ -957,9 +959,12 @@ class LabCalendarApp {
 
     this.eventModalCloseBtn?.addEventListener('click', () => this.closeEventEditModal());
 
+    this.initRepeatControls();
+
     // Toggle All-Day rows
     this.editEventIsAllDay?.addEventListener('change', () => {
       const isAllDay = this.editEventIsAllDay.checked;
+      this.refreshRepeatVisibility();
       if (isAllDay) {
         this.editEventTimeRow?.classList.add('hidden');
         this.editEventDateRangeRow?.classList.remove('hidden');
@@ -993,6 +998,10 @@ class LabCalendarApp {
     });
 
     this.modalSplitBtn?.addEventListener('click', () => {
+      if (this.currentEditingEvent?.isSeriesOccurrence) {
+        this.openSeriesActionPrompt('split');
+        return;
+      }
       const id = this.editEventIdInput.value;
       if (id) {
         store.splitEvent(id);
@@ -1002,6 +1011,10 @@ class LabCalendarApp {
     });
 
     this.modalDuplicateBtn?.addEventListener('click', () => {
+      if (this.currentEditingEvent?.isSeriesOccurrence) {
+        this.openSeriesActionPrompt('duplicate');
+        return;
+      }
       const id = this.editEventIdInput.value;
       if (id) {
         store.duplicateEvent(id);
@@ -1080,13 +1093,8 @@ class LabCalendarApp {
         this.protocolInfoBanner.classList.add('hidden');
       }
 
-      if (event.isSeriesOccurrence) {
-        this.modalSplitBtn.classList.add('hidden');
-        this.modalDuplicateBtn.classList.add('hidden');
-      } else {
-        this.modalSplitBtn.classList.remove('hidden');
-        this.modalDuplicateBtn.classList.remove('hidden');
-      }
+      this.modalSplitBtn.classList.remove('hidden');
+      this.modalDuplicateBtn.classList.remove('hidden');
       this.modalDeleteBtn.classList.remove('hidden');
     } else {
       document.getElementById('eventModalTitle').textContent = 'Create New Event';
@@ -1102,8 +1110,205 @@ class LabCalendarApp {
       this.modalDeleteBtn.classList.add('hidden');
     }
 
+    this.setupRepeatControls(event);
+
     this.eventEditModal.classList.remove('hidden');
     setTimeout(() => this.editEventTitleInput?.focus(), 50);
+  }
+
+  /**
+   * Repeat controls (Google-Calendar-like): presets, "every N days/weeks/months/years",
+   * weekday toggles, monthly "on day 21 / on the 3rd Wednesday", and an end date or count.
+   */
+  initRepeatControls() {
+    this.repeatSection = document.getElementById('repeatSection');
+    this.repeatPreset = document.getElementById('repeatPreset');
+    this.repeatCustom = document.getElementById('repeatCustom');
+    this.repeatInterval = document.getElementById('repeatInterval');
+    this.repeatFreq = document.getElementById('repeatFreq');
+    this.repeatWeekdays = document.getElementById('repeatWeekdays');
+    this.repeatMonthMode = document.getElementById('repeatMonthMode');
+    this.repeatEnds = document.getElementById('repeatEnds');
+    this.repeatEndMode = document.getElementById('repeatEndMode');
+    this.repeatEndDate = document.getElementById('repeatEndDate');
+    this.repeatEndCountWrap = document.getElementById('repeatEndCountWrap');
+    this.repeatEndCount = document.getElementById('repeatEndCount');
+    this.repeatSummary = document.getElementById('repeatSummary');
+    if (!this.repeatSection) return;
+
+    // Monday-first weekday toggles
+    ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'].forEach((code, i) => {
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex; align-items:center; gap:4px; font-size:12px; cursor:pointer; padding:4px 8px; border:1px solid var(--google-grey-300, #dadce0); border-radius:14px;';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = code;
+      box.addEventListener('change', () => this.updateRepeatLabels());
+      label.append(box, document.createTextNode(DAY_NAMES_SHORT[i]));
+      this.repeatWeekdays.appendChild(label);
+    });
+
+    this.repeatPreset.addEventListener('change', () => {
+      if (this.repeatPreset.value === 'custom') this.fillCustomFromRule(this.getRepeatRule());
+      this.updateRepeatLabels();
+    });
+    [this.repeatInterval, this.repeatMonthMode, this.repeatEndDate, this.repeatEndCount].forEach((el) =>
+      el.addEventListener('input', () => this.updateRepeatLabels())
+    );
+    this.repeatFreq.addEventListener('change', () => {
+      // Sensible defaults when the unit changes: weekly keeps the start weekday ticked
+      if (this.repeatFreq.value === 'WEEKLY' && !this.getCheckedWeekdays().length) {
+        this.setCheckedWeekdays([DAY_CODES[parseDateKey(this.getRepeatStartKey()).getDay()]]);
+      }
+      this.updateRepeatLabels();
+    });
+    this.repeatEndMode.addEventListener('change', () => {
+      if (this.repeatEndMode.value === 'date' && !this.repeatEndDate.value) {
+        this.repeatEndDate.value = shiftDateKey(this.getRepeatStartKey(), 90);
+      }
+      this.updateRepeatLabels();
+    });
+  }
+
+  getRepeatStartKey() {
+    return (this.editEventDateInput?.value) || formatDateKey(store.currentDate);
+  }
+
+  getCheckedWeekdays() {
+    return [...this.repeatWeekdays.querySelectorAll('input:checked')].map((b) => b.value);
+  }
+
+  setCheckedWeekdays(codes) {
+    this.repeatWeekdays.querySelectorAll('input').forEach((b) => { b.checked = codes.includes(b.value); });
+  }
+
+  // Start state of the repeat section for the event being opened
+  setupRepeatControls(event) {
+    if (!this.repeatSection) return;
+    const seriesObj = event?.isSeriesOccurrence ? store.findSeries(event.seriesId) : null;
+    // Chained protocol steps and weekly-goal blocks cannot repeat
+    this.repeatAllowed = !(event?.protocolGroupId || event?.quotaId);
+    this.repeatSeries = seriesObj;
+    // An existing recurring event cannot be turned back into a single one from here (delete it instead)
+    this.repeatPreset.querySelector('option[value="none"]').disabled = Boolean(seriesObj);
+
+    const startKey = this.getRepeatStartKey();
+    if (seriesObj) {
+      this.repeatPreset.value = this.presetForRule(seriesObj.rule, startKey);
+      this.fillCustomFromRule(seriesObj.rule, seriesObj.from);
+      this.repeatEndMode.value = seriesObj.until ? 'date' : 'never';
+      this.repeatEndDate.value = seriesObj.until || '';
+    } else {
+      this.repeatPreset.value = 'none';
+      this.fillCustomFromRule({ freq: 'WEEKLY', interval: 1 }, startKey);
+      this.repeatEndMode.value = 'never';
+      this.repeatEndDate.value = '';
+    }
+    this.repeatEndCount.value = 10;
+    this.updateRepeatLabels();
+    this.refreshRepeatVisibility();
+    this.repeatInitialSignature = seriesObj ? this.repeatSignature() : null;
+  }
+
+  refreshRepeatVisibility() {
+    if (!this.repeatSection) return;
+    const hide = !this.repeatAllowed || Boolean(this.editEventIsAllDay?.checked);
+    this.repeatSection.classList.toggle('hidden', hide);
+  }
+
+  presetForRule(rawRule, fromKey) {
+    const rule = normalizeRule(rawRule, fromKey);
+    if (rule.interval !== 1) return 'custom';
+    const startDay = DAY_CODES[parseDateKey(fromKey).getDay()];
+    if (rule.freq === 'DAILY') return 'daily';
+    if (rule.freq === 'YEARLY') return 'yearly';
+    if (rule.freq === 'MONTHLY') return rule.monthMode === 'day' ? 'monthly' : 'custom';
+    if (rule.byDay.join() === WEEKDAY_CODES.join()) return 'weekdays';
+    return rule.byDay.length === 1 && rule.byDay[0] === startDay ? 'weekly' : 'custom';
+  }
+
+  fillCustomFromRule(rawRule, fromKey = this.getRepeatStartKey()) {
+    const rule = normalizeRule(rawRule, fromKey);
+    this.repeatInterval.value = rule.interval;
+    this.repeatFreq.value = rule.freq;
+    this.setCheckedWeekdays(rule.freq === 'WEEKLY' ? rule.byDay : [DAY_CODES[parseDateKey(fromKey).getDay()]]);
+    this.fillMonthModeOptions(rule.monthMode || 'day');
+  }
+
+  fillMonthModeOptions(selected = this.repeatMonthMode.value || 'day') {
+    const d = parseDateKey(this.getRepeatStartKey());
+    const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getDay()];
+    const ordinal = Math.ceil(d.getDate() / 7);
+    const isLast = d.getDate() + 7 > new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    const options = [['day', `On day ${d.getDate()}`]];
+    if (ordinal <= 4) options.push(['nth', `On the ${['first', 'second', 'third', 'fourth'][ordinal - 1]} ${dayName}`]);
+    if (isLast) options.push(['last', `On the last ${dayName}`]);
+    this.repeatMonthMode.innerHTML = '';
+    options.forEach(([value, text]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = text;
+      this.repeatMonthMode.appendChild(opt);
+    });
+    this.repeatMonthMode.value = options.some(([v]) => v === selected) ? selected : 'day';
+  }
+
+  // The rule chosen in the form (null = does not repeat)
+  getRepeatRule() {
+    const preset = this.repeatPreset.value;
+    const startKey = this.getRepeatStartKey();
+    const startDay = DAY_CODES[parseDateKey(startKey).getDay()];
+    switch (preset) {
+      case 'none': return null;
+      case 'daily': return { freq: 'DAILY', interval: 1 };
+      case 'weekly': return { freq: 'WEEKLY', interval: 1, byDay: [startDay] };
+      case 'monthly': return { freq: 'MONTHLY', interval: 1, monthMode: 'day' };
+      case 'yearly': return { freq: 'YEARLY', interval: 1 };
+      case 'weekdays': return { freq: 'WEEKLY', interval: 1, byDay: [...WEEKDAY_CODES] };
+      default:
+        return normalizeRule({
+          freq: this.repeatFreq.value,
+          interval: this.repeatInterval.value,
+          byDay: this.getCheckedWeekdays(),
+          monthMode: this.repeatMonthMode.value
+        }, startKey);
+    }
+  }
+
+  // The full repeat choice: rule plus how it ends (null = does not repeat)
+  getRepeatChoice() {
+    const rule = this.getRepeatRule();
+    if (!rule) return null;
+    const endMode = this.repeatEndMode.value;
+    return {
+      rule,
+      endMode,
+      endDate: endMode === 'date' ? this.repeatEndDate.value : null,
+      endCount: endMode === 'count' ? Math.max(1, Math.round(Number(this.repeatEndCount.value)) || 1) : null
+    };
+  }
+
+  repeatSignature() {
+    return JSON.stringify(this.getRepeatChoice());
+  }
+
+  updateRepeatLabels() {
+    if (!this.repeatSection) return;
+    const custom = this.repeatPreset.value === 'custom';
+    this.repeatCustom.classList.toggle('hidden', !custom);
+    this.repeatWeekdays.classList.toggle('hidden', !(custom && this.repeatFreq.value === 'WEEKLY'));
+    this.repeatMonthMode.classList.toggle('hidden', !(custom && this.repeatFreq.value === 'MONTHLY'));
+    this.fillMonthModeOptions();
+    this.repeatEnds.classList.toggle('hidden', this.repeatPreset.value === 'none');
+    this.repeatEndDate.classList.toggle('hidden', this.repeatEndMode.value !== 'date');
+    this.repeatEndCountWrap.classList.toggle('hidden', this.repeatEndMode.value !== 'count');
+
+    const rule = this.getRepeatRule();
+    const anchor = this.repeatSeries?.from || this.getRepeatStartKey();
+    let text = rule ? describeRule(rule, anchor) : '';
+    if (rule && this.repeatEndMode.value === 'date' && this.repeatEndDate.value) text += `, until ${this.repeatEndDate.value}`;
+    if (rule && this.repeatEndMode.value === 'count') text += `, ${this.repeatEndCount.value} times`;
+    this.repeatSummary.textContent = text;
   }
 
   closeEventEditModal() {
@@ -1178,13 +1383,53 @@ class LabCalendarApp {
       };
     }
 
+    const repeat = isAllDay || !this.repeatAllowed ? null : this.getRepeatChoice();
+    if (repeat?.endMode === 'date' && (!repeat.endDate || repeat.endDate < updates.dateKey)) {
+      alert('The repeat end date must be on or after the start date.');
+      return;
+    }
+
     if (this.currentEditingEvent?.isSeriesOccurrence) {
       const seriesObj = store.findSeries(this.currentEditingEvent.seriesId);
       const occDate = this.currentEditingEvent.occurrenceDate || this.currentEditingEvent.dateKey;
+      // Only send repeat changes when the user actually changed them
+      if (repeat && this.repeatSignature() !== this.repeatInitialSignature) {
+        updates.rule = repeat.rule;
+        updates.until = repeat.endMode === 'date' ? repeat.endDate : null;
+        if (repeat.endMode === 'count') updates.endCount = repeat.endCount;
+      }
       this.closeEventEditModal();
       if (seriesObj) {
         this.openSeriesPromptModal(seriesObj, occDate, updates, false);
       }
+      return;
+    }
+
+    // New recurring event, or an existing single event that is made recurring
+    if (repeat) {
+      if (updates.endDateKey !== updates.dateKey) {
+        alert('Recurring events must start and end on the same day.');
+        return;
+      }
+      const until = repeat.endMode === 'count'
+        ? untilForCount(repeat.rule, updates.dateKey, repeat.endCount)
+        : repeat.endDate;
+      const newSeries = {
+        id: generateId('series'),
+        title,
+        rule: repeat.rule,
+        startTime: updates.startTime,
+        endTime: updates.endTime,
+        from: updates.dateKey,
+        until: until || null,
+        color,
+        category,
+        notes
+      };
+      if (id) store.convertEventToSeries(id, newSeries);
+      else store.addSeries(newSeries);
+      this.closeEventEditModal();
+      this.showToast(`Created recurring event "${title}" (${describeRule(repeat.rule, updates.dateKey)})`);
       return;
     }
 
@@ -1225,11 +1470,17 @@ class LabCalendarApp {
       this.seriesPromptModal.classList.add('hidden');
 
       if (!this.pendingSeriesContext) return;
-      const { seriesObj, occDate, updates, isDelete } = this.pendingSeriesContext;
+      const { seriesObj, occDate, updates, action } = this.pendingSeriesContext;
 
-      if (isDelete) {
+      if (action === 'delete') {
         store.deleteSeriesOccurrence(seriesObj.id, occDate, selectedScope);
         this.showToast(`Deleted recurring event (${selectedScope}).`);
+      } else if (action === 'duplicate') {
+        const done = store.duplicateSeriesOccurrence(seriesObj.id, occDate, selectedScope);
+        this.showToast(done ? (selectedScope === 'all' ? 'Recurring event duplicated' : 'Occurrence duplicated as a single event') : 'Could not duplicate this event');
+      } else if (action === 'split') {
+        const done = store.splitSeriesOccurrence(seriesObj.id, occDate, selectedScope);
+        this.showToast(done ? 'Event split in two parts' : 'This event is too short to split');
       } else if (updates) {
         store.modifySeriesOccurrence(seriesObj.id, occDate, updates, selectedScope);
         this.showToast(`Updated recurring event (${selectedScope}).`);
@@ -1237,16 +1488,38 @@ class LabCalendarApp {
     });
   }
 
-  openSeriesPromptModal(seriesObj, occDate, updates = null, isDelete = false) {
-    this.pendingSeriesContext = { seriesObj, occDate, updates, isDelete };
+  // Duplicate / Split buttons of the edit dialog, when the event is a recurring occurrence
+  openSeriesActionPrompt(action) {
+    const evt = this.currentEditingEvent;
+    const seriesObj = evt && store.findSeries(evt.seriesId);
+    const occDate = evt && (evt.occurrenceDate || evt.dateKey);
+    this.closeEventEditModal();
+    if (seriesObj) this.openSeriesPromptModal(seriesObj, occDate, null, false, action);
+  }
 
-    if (isDelete) {
-      this.seriesPromptTitle.textContent = 'Delete Recurring Event';
-      this.seriesPromptDescription.textContent = `Do you want to delete only this occurrence of "${seriesObj.title}", or all occurrences?`;
-    } else {
-      this.seriesPromptTitle.textContent = 'Edit Recurring Event';
-      this.seriesPromptDescription.textContent = `Do you want to edit only this occurrence of "${seriesObj.title}", or all occurrences?`;
-    }
+  openSeriesPromptModal(seriesObj, occDate, updates = null, isDelete = false, action = null) {
+    action = isDelete ? 'delete' : (action || 'edit');
+    this.pendingSeriesContext = { seriesObj, occDate, updates, action };
+
+    const verbs = {
+      delete: ['Delete Recurring Event', 'delete'],
+      duplicate: ['Duplicate Recurring Event', 'duplicate'],
+      split: ['Split Recurring Event', 'split'],
+      edit: ['Edit Recurring Event', 'edit']
+    };
+    const [heading, verb] = verbs[action];
+    this.seriesPromptTitle.textContent = heading;
+    this.seriesPromptDescription.textContent = action === 'edit' || action === 'delete'
+      ? `Do you want to ${verb} only this occurrence of "${seriesObj.title}", or all occurrences?`
+      : `Do you want to ${verb} only this occurrence of "${seriesObj.title}" (as a single event), or the whole recurring series?`;
+
+    // Duplicate / split have no "this and following"; changing the repeat rule cannot apply to one occurrence
+    const radio = (value) => document.querySelector(`input[name="seriesEditScope"][value="${value}"]`);
+    const ruleChanged = Boolean(updates && ('rule' in updates));
+    radio('following').closest('label').classList.toggle('hidden', action === 'duplicate' || action === 'split');
+    radio('this').disabled = ruleChanged;
+    radio('this').closest('label').style.opacity = ruleChanged ? '0.5' : '';
+    (ruleChanged ? radio('following') : radio('this')).checked = true;
 
     this.seriesPromptModal.classList.remove('hidden');
   }

@@ -11,8 +11,11 @@ import {
   getEventSpan,
   getEventDayRange,
   spanToFields,
-  isAllDayEvent
+  isAllDayEvent,
+  timeToMinutes,
+  minutesToTime
 } from './utils.js';
+import { ruleOccursOn, untilForCount } from './recurrence.js';
 import { loadStateFromStorage, saveStateToStorage, getStorageKey } from './storage.js';
 import { BUILT_IN_PROTOCOLS, shiftProtocolGroup as shiftProtoEvents, cascadeShiftProtocolSteps, checkProtocolChainIntegrity } from './protocols.js';
 
@@ -304,11 +307,8 @@ class StateStore {
   }
 
   seriesOccursOn(s, dateKey) {
-    const dayCode = DAY_CODE_MAP[parseDateKey(dateKey).getDay()];
-    if (!s.rule?.byDay?.includes(dayCode)) return false;
-    if (s.from && dateKey < s.from) return false;
     if (s.until && dateKey > s.until) return false;
-    return true;
+    return ruleOccursOn(s.rule, s.from, dateKey);
   }
 
   /**
@@ -565,16 +565,37 @@ class StateStore {
    * weekday shift of the recurrence rule; all-day fields are not supported on series.
    */
   toSeriesUpdates(seriesItem, occurrenceDate, updates) {
-    const { dateKey, endDateKey, isAllDay, ...rest } = updates;
+    const { dateKey, endDateKey, isAllDay, endCount, ...rest } = updates;
     const dayShift = dateKey ? calculateDaysBetween(occurrenceDate, dateKey) : 0;
-    if (dayShift !== 0 && seriesItem.rule?.byDay) {
-      const shifted = seriesItem.rule.byDay.map((code) => {
+    const rule = rest.rule || seriesItem.rule || {};
+    // Only weekly rules shift their weekdays; daily / monthly / yearly rules are anchored on the
+    // start date, which the caller moves instead
+    if (dayShift !== 0 && (rule.freq === 'WEEKLY' || !rule.freq) && rule.byDay) {
+      const shifted = rule.byDay.map((code) => {
         const idx = DAY_CODE_MAP.indexOf(code);
         return idx === -1 ? code : DAY_CODE_MAP[(((idx + dayShift) % 7) + 7) % 7];
       });
-      rest.rule = { ...seriesItem.rule, byDay: [...new Set(shifted)] };
+      rest.rule = { ...rule, byDay: [...new Set(shifted)] };
     }
-    return { updates: rest, dayShift };
+    return { updates: rest, dayShift, endCount };
+  }
+
+  // Add a recurring series (one undo step)
+  addSeries(series) {
+    this.pushHistorySnapshot(`Add recurring event "${series.title}"`);
+    this.series.push(series);
+    this.notify('series_updated');
+  }
+
+  // Turn an existing one-off event into a recurring series (one undo step)
+  convertEventToSeries(eventId, series) {
+    const idx = this.events.findIndex((e) => e.id === eventId);
+    if (idx === -1) return;
+    this.pushHistorySnapshot(`Make "${series.title}" recurring`);
+    this.events.splice(idx, 1);
+    if (this.selectedEventId === eventId) this.selectedEventId = null;
+    this.series.push(series);
+    this.notify('series_updated');
   }
 
   // Series Mutations (Series + Exceptions)
@@ -603,15 +624,25 @@ class StateStore {
       }
     } else if (mode === 'all') {
       // Modify all events in series
-      const { updates: seriesUpdates } = this.toSeriesUpdates(seriesItem, occurrenceDate, updates);
+      const { updates: seriesUpdates, dayShift, endCount } = this.toSeriesUpdates(seriesItem, occurrenceDate, updates);
       Object.assign(seriesItem, seriesUpdates);
+      if (dayShift !== 0 && seriesItem.rule?.freq !== 'WEEKLY') {
+        seriesItem.from = shiftDateKey(seriesItem.from, dayShift);
+        if (seriesItem.until) seriesItem.until = shiftDateKey(seriesItem.until, dayShift);
+      }
+      if (endCount) seriesItem.until = untilForCount(seriesItem.rule, seriesItem.from, endCount);
     } else if (mode === 'following') {
       // Modify this and following events: end the old series, start a new one
-      const { updates: seriesUpdates, dayShift } = this.toSeriesUpdates(seriesItem, occurrenceDate, updates);
+      const { updates: seriesUpdates, dayShift, endCount } = this.toSeriesUpdates(seriesItem, occurrenceDate, updates);
       const originalUntil = seriesItem.until;
       seriesItem.until = shiftDateKey(occurrenceDate, -1);
 
-      const newFrom = dayShift < 0 ? shiftDateKey(occurrenceDate, dayShift) : occurrenceDate;
+      // Weekly rules start on the original date (the weekdays were shifted instead); other
+      // rules are anchored on the start date, so the new series starts on the moved date
+      const weekly = (seriesUpdates.rule || seriesItem.rule)?.freq === 'WEEKLY';
+      const newFrom = weekly
+        ? (dayShift < 0 ? shiftDateKey(occurrenceDate, dayShift) : occurrenceDate)
+        : shiftDateKey(occurrenceDate, dayShift);
       const newSeries = {
         ...JSON.parse(JSON.stringify(seriesItem)),
         id: generateId('series'),
@@ -619,6 +650,7 @@ class StateStore {
         until: originalUntil || null,
         ...seriesUpdates
       };
+      if (endCount) newSeries.until = untilForCount(newSeries.rule, newFrom, endCount);
       this.series.push(newSeries);
 
       // Exceptions after the split belong to occurrences that no longer exist in the old series
@@ -628,6 +660,94 @@ class StateStore {
     }
 
     this.notify('series_updated');
+  }
+
+  /**
+   * Duplicate a recurring event. 'this': a one-off copy of this occurrence, placed right after
+   * it. 'all': a copy of the whole series, moved after the original within the day if it fits.
+   */
+  duplicateSeriesOccurrence(seriesId, occurrenceDate, mode = 'this') {
+    const seriesItem = this.findSeries(seriesId);
+    const occ = seriesItem && this.buildSeriesOccurrence(seriesItem, occurrenceDate);
+    if (!occ) return false;
+    this.pushHistorySnapshot(`Duplicate recurring event (${mode})`);
+
+    if (mode === 'all') {
+      const copy = {
+        ...JSON.parse(JSON.stringify(seriesItem)),
+        id: generateId('series'),
+        title: `${seriesItem.title} (Copy)`
+      };
+      const sEnd = timeToMinutes(seriesItem.endTime);
+      const dur = sEnd - timeToMinutes(seriesItem.startTime);
+      if (sEnd + dur <= 1439) {
+        copy.startTime = seriesItem.endTime;
+        copy.endTime = minutesToTime(sEnd + dur);
+      }
+      this.series.push(copy);
+    } else {
+      const { startAbs, endAbs } = getEventSpan(occ);
+      this.events.push({
+        id: generateId('evt_clone'),
+        title: `${occ.title} (Copy)`,
+        isAllDay: false,
+        ...spanToFields(endAbs, endAbs + (endAbs - startAbs)),
+        color: occ.color,
+        category: occ.category,
+        notes: occ.notes
+      });
+    }
+    this.notify('event_duplicated');
+    return true;
+  }
+
+  /**
+   * Split a recurring event in two parts. 'this': this occurrence becomes two one-off events.
+   * 'all': the series becomes two series (first and second half of every occurrence).
+   * Returns false when the event is too short to split.
+   */
+  splitSeriesOccurrence(seriesId, occurrenceDate, mode = 'this') {
+    const seriesItem = this.findSeries(seriesId);
+    const occ = seriesItem && this.buildSeriesOccurrence(seriesItem, occurrenceDate);
+    if (!occ) return false;
+
+    const source = mode === 'all' ? seriesItem : occ;
+    const startMin = timeToMinutes(source.startTime);
+    const endMin = timeToMinutes(source.endTime);
+    if (endMin - startMin < 20) return false;
+    const mid = minutesToTime(startMin + Math.floor((endMin - startMin) / 2));
+
+    this.pushHistorySnapshot(`Split recurring event (${mode})`);
+
+    if (mode === 'all') {
+      const partB = {
+        ...JSON.parse(JSON.stringify(seriesItem)),
+        id: generateId('series'),
+        title: `${seriesItem.title} (Part B)`,
+        startTime: mid
+      };
+      seriesItem.endTime = mid;
+      this.series.push(partB);
+    } else {
+      const base = {
+        isAllDay: false,
+        dateKey: occ.dateKey,
+        endDateKey: occ.dateKey,
+        color: occ.color,
+        category: occ.category,
+        notes: occ.notes
+      };
+      this.events.push(
+        { ...base, id: generateId('evt_split'), title: occ.title, startTime: occ.startTime, endTime: mid },
+        { ...base, id: generateId('evt_split'), title: `${occ.title} (Part B)`, startTime: mid, endTime: occ.endTime }
+      );
+      this.exceptions = this.exceptions.filter(
+        (e) => !(e.seriesId === seriesItem.id && e.occurrenceDate === occurrenceDate)
+      );
+      this.exceptions.push({ id: generateId('exc'), seriesId: seriesItem.id, occurrenceDate, type: 'cancelled' });
+    }
+    this.notify('event_split');
+    return true;
   }
 
   deleteSeriesOccurrence(seriesId, occurrenceDate, mode = 'this') {

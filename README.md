@@ -10,7 +10,7 @@ Inspired by Google Calendar, LabCal provides specialized wet-lab features:
   - **Ctrl / Cmd + Drag or Resize**: Cascade shift downstream steps while preserving relative gaps.
   - **Broken Chain Warning**: Visual indicator (`⚠️`) if a step is scheduled before its predecessor finishes.
 - **Passive / Incubation Hatched Overlay**: Passive steps (blocking, incubation, gel polymerization) render with a distinctive hatched pattern and allow active benchwork blocks to overlap them.
-- **Recurring Series & Exceptions**: Google Calendar-style recurring events (e.g. Wednesday Lab Meeting) with "This occurrence only" vs "All occurrences" editing.
+- **Recurring events**: create them in the event dialog with **Repeat**: every day / week / month / year / weekday, or Custom (every N days/weeks/months/years, chosen weekdays such as Tue + Thu, monthly "on day 21" / "on the third Wednesday" / "on the last Wednesday"), ending never, on a date, or after N times. Edit, delete, duplicate or split them for "this occurrence", "this and following" or "all events". A normal event can be made recurring by editing it. Not available for protocol steps, weekly-goal blocks or all-day events.
 - **Weekly Flexible Quotas**: Goal tracking (e.g. Thesis Writing 4h/week) with dynamic calculation, progress bars, and over-scheduling indicators.
 - **RFC 5545 iCalendar (.ics) Export**: Export a week, a date range or everything, with or without passive steps, recurring events and hidden categories. Google Calendar never removes events on re-import, so import into a dedicated "LabCal" calendar you can delete and re-import.
 - **Overlapping steps & earliest start**: Protocol steps can run during the previous step (e.g. prepare buffer during an incubation) and can have an earliest start time (e.g. not before 09:30 after an overnight incubation).
@@ -93,8 +93,8 @@ To access LabCal from anywhere on HTTPS:
 | **Move Entire Protocol Group** | Hold <kbd>Shift</kbd> while dragging any step in the protocol |
 | **Cascade Shift Downstream** | Hold <kbd>Ctrl</kbd> or <kbd>Cmd</kbd> while dragging or resizing a step |
 | **Resize Duration** | Drag top or bottom handle on event card |
-| **Split Event (in half / 3a, 3b)** | Right-click event -> **Split in Half** |
-| **Duplicate Event** | Right-click event -> **Duplicate** |
+| **Split Event (in half / 3a, 3b)** | Right-click event -> **Split in Half** (recurring events ask: this occurrence or the whole series) |
+| **Duplicate Event** | Right-click event -> **Duplicate** (recurring events ask: this occurrence or the whole series) |
 | **Undo** | <kbd>Ctrl</kbd> + <kbd>Z</kbd> |
 | **Redo** | <kbd>Ctrl</kbd> + <kbd>Y</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> |
 | **Search** | Top search bar filters by title, protocol name, or bench notes |

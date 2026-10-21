@@ -3,7 +3,7 @@
  * Enables PWA installation, instant loading, and 100% offline functionality
  */
 
-const CACHE_NAME = 'labcal-cache-v3';
+const CACHE_NAME = 'labcal-cache-v4';
 
 const STATIC_ASSETS = [
   './',
@@ -23,6 +23,7 @@ const STATIC_ASSETS = [
   './js/quotas.js',
   './js/storage.js',
   './js/utils.js',
+  './js/recurrence.js',
   './js/sync.js',
   './icons/icon.svg',
   './icons/icon-192.png',

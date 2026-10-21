@@ -295,6 +295,47 @@
           </div>
         </div>
 
+        <div class="form-group full-width" id="repeatSection" style="margin-bottom: 12px;">
+          <label>Repeat</label>
+          <select class="input-select" id="repeatPreset">
+            <option value="none">Does not repeat</option>
+            <option value="daily">Every day</option>
+            <option value="weekly">Every week</option>
+            <option value="monthly">Every month</option>
+            <option value="yearly">Every year</option>
+            <option value="weekdays">Every weekday (Mon-Fri)</option>
+            <option value="custom">Custom...</option>
+          </select>
+          <div id="repeatCustom" class="hidden" style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+              <span>Repeat every</span>
+              <input type="number" class="input-text" id="repeatInterval" min="1" max="99" value="1" style="width: 70px;">
+              <select class="input-select" id="repeatFreq" style="width: auto;">
+                <option value="DAILY">day(s)</option>
+                <option value="WEEKLY">week(s)</option>
+                <option value="MONTHLY">month(s)</option>
+                <option value="YEARLY">year(s)</option>
+              </select>
+            </div>
+            <div id="repeatWeekdays" class="hidden" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+            <select class="input-select hidden" id="repeatMonthMode"></select>
+          </div>
+          <div id="repeatEnds" class="hidden" style="display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; flex-wrap: wrap;">
+            <span>Ends</span>
+            <select class="input-select" id="repeatEndMode" style="width: auto;">
+              <option value="never">Never</option>
+              <option value="date">On date</option>
+              <option value="count">After</option>
+            </select>
+            <input type="date" class="input-text hidden" id="repeatEndDate" style="width: auto;">
+            <span id="repeatEndCountWrap" class="hidden" style="display: inline-flex; align-items: center; gap: 6px;">
+              <input type="number" class="input-text" id="repeatEndCount" min="1" max="999" value="10" style="width: 70px;">
+              <span>occurrences</span>
+            </span>
+          </div>
+          <div id="repeatSummary" style="font-size: 11px; color: var(--google-grey-700); margin-top: 6px;"></div>
+        </div>
+
         <div class="form-row-2">
           <div class="form-group">
             <label>Category</label>
