@@ -5,6 +5,7 @@
 
 import { generateId, formatDateKey, getWeekDates, foldIcsLine, shiftDateKey, parseDateKey, isAllDayEvent } from './utils.js';
 import { DEFAULT_QUOTAS } from './quotas.js';
+import { firstOccurrence, ruleToRRule } from './recurrence.js';
 
 const DEFAULT_STORAGE_KEY = 'lab_calendar_data_v2';
 const CURRENT_SCHEMA_VERSION = 2;
@@ -219,19 +220,8 @@ function downloadTextFile(content, filename, type) {
   URL.revokeObjectURL(url);
 }
 
-const ICS_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-
 const icsDate = (dateKey) => dateKey.replace(/-/g, '');
 const icsTime = (time) => time.replace(':', '') + '00';
-
-// First date >= fromKey on one of the rule's weekdays (RFC 5545: DTSTART is the first instance)
-function firstOccurrenceOnOrAfter(fromKey, byDay) {
-  for (let i = 0; i < 7; i++) {
-    const key = shiftDateKey(fromKey, i);
-    if (byDay.includes(ICS_DAY_CODES[parseDateKey(key).getDay()])) return key;
-  }
-  return fromKey;
-}
 
 /**
  * Build RFC 5545 iCalendar text. Times are floating (local wall-clock), so UNTIL,
@@ -254,12 +244,12 @@ export function buildIcsContent(events, seriesList = [], exceptions = []) {
   // 1. Export Recurring Series with RRULE
   (seriesList || []).forEach((s) => {
     const uid = `series-${s.id}@labcalendar.app`;
-    const byDayList = s.rule?.byDay?.length ? s.rule.byDay : ['WE'];
-    const firstKey = firstOccurrenceOnOrAfter(s.from, byDayList);
+    // RFC 5545: DTSTART is the first real instance
+    const firstKey = firstOccurrence(s.rule, s.from);
     const startCompact = icsTime(s.startTime);
     const endCompact = icsTime(s.endTime);
 
-    let rrule = `RRULE:FREQ=${s.rule?.freq || 'WEEKLY'};BYDAY=${byDayList.join(',')}`;
+    let rrule = `RRULE:${ruleToRRule(s.rule, s.from)}`;
     if (s.until) {
       rrule += `;UNTIL=${icsDate(s.until)}T235959`;
     }

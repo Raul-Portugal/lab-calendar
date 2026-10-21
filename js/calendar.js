@@ -27,6 +27,7 @@ import {
   isAllDayEvent,
   MINUTES_PER_DAY
 } from './utils.js';
+import { describeRule } from './recurrence.js';
 
 export class CalendarRenderer {
   constructor(containerEl, store) {
@@ -350,8 +351,10 @@ export class CalendarRenderer {
           </div>
         `;
       } else if (evt.isSeriesOccurrence) {
+        const seriesObj = this.store.findSeries(evt.seriesId);
+        const ruleText = seriesObj ? describeRule(seriesObj.rule, seriesObj.from) : 'Recurring';
         stepBadgeHtml = `
-          <div class="step-counter-badge recurring-badge" title="Weekly Recurring Series">
+          <div class="step-counter-badge recurring-badge" title="${escapeHtml(ruleText)}">
             <span>🔁 Recurring</span>
           </div>
         `;

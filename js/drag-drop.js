@@ -843,6 +843,12 @@ export class DragDropController {
 
       if (action === 'edit') {
         if (this.onOpenEditModal) this.onOpenEditModal(evt);
+      } else if ((action === 'split' || action === 'duplicate') && evt.isSeriesOccurrence) {
+        // Recurring events ask "this occurrence or the whole series?"
+        const s = this.store.findSeries(evt.seriesId);
+        if (s && this.onPromptSeriesEdit) {
+          this.onPromptSeriesEdit(s, evt.occurrenceDate || evt.dateKey, null, false, action);
+        }
       } else if (action === 'split') {
         this.store.splitEvent(evt.id);
         this.showToast(`Split "${evt.title}" into two parts`);

@@ -28,6 +28,9 @@ language, and describe what to check in the app afterwards.
   same-day `startTime`/`endTime` arithmetic.
 - **State**: change data only through `store` methods in `js/state.js` (they record undo and call
   `notify(type)`). View-only notify types don't persist; `isLocalDataChange()` decides what syncs.
+- **Recurrence**: a series' `rule` (`freq`, `interval`, `byDay`, `monthMode`) is anchored on the
+  series' `from` date. Only `js/recurrence.js` interprets it (`ruleOccursOn`, `describeRule`,
+  `ruleToRRule`); never test `rule.byDay` directly. "Ends after N" is stored as `until`.
 - **Protocol step fields** (`anchorType`, `gapMinutes`, `offsetMinutes`, `notBefore`, ...): a new
   field must be added to `sanitizeProtocol()`, the Protocol Builder, the tests, and
   `docs/protocol-import-llm-instructions.md` (+ its example JSON).

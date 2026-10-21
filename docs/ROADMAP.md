@@ -11,6 +11,9 @@ L = several days. Move items to "Done" (with the PR number) when they are merged
 - Working hours and earliest start ignore weekends; optional "skip weekends" for protocol steps. (M)
 - "Clear sample data" button: removes the demo recurring events (Lab Meeting, Department
   Seminar) and the sample thesis-writing block created on first launch. (S)
+- Recurrence limits: all-day and multi-day events cannot repeat; turning a series into a
+  monthly/yearly one keeps its original start date as the anchor; "Ends after N times" is stored
+  as an end date (editing the rule re-asks for it). (S–M)
 
 ### User experience (quick wins)
 - Replace browser `alert` / `confirm` / `prompt` with in-app dialogs; "Deleted. Undo" toasts
@@ -33,7 +36,6 @@ L = several days. Move items to "Done" (with the PR number) when they are merged
 - Step reminders (notifications before a step starts / an incubation ends). (M, L with push)
 - Protocol run tracking: tick off steps, per-run notes, export a run sheet for the lab notebook. (M)
 - Reagent lists per protocol, scaled by sample number. (M)
-- More recurrence rules: daily, every N weeks, monthly, end after N times. (M)
 - Import .ics; later a subscribable calendar feed (would make Google Calendar stay in sync,
   including deletions, which .ics import can't do). (M / L)
 - Quota history charts; search results list across weeks. (S–M)
@@ -58,3 +60,4 @@ L = several days. Move items to "Done" (with the PR number) when they are merged
 - #2 Overnight events, narrow-screen alignment + 3-day view + swipe, protocol builder (add at bottom, drag reorder, preview times).
 - #3 Protocol import button, protocol categories, LLM protocol instructions, service-worker update fix.
 - #4 Foldable sidebar, working-hours shading, hide passive steps, overlapping steps + earliest start, .ics export dialog.
+- Recurring events: create from the event dialog (daily / weekly / monthly / yearly, every N, chosen weekdays, monthly by day or nth weekday, end date or count), make an existing event recurring, duplicate and split recurring events (PR number once known).

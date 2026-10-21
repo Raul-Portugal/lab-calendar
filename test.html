@@ -639,6 +639,77 @@
       assert(foldedMb.every(l => enc.encode(l).length <= 75), 'ICS folding limits lines to 75 octets with µ / ° characters');
       assert(foldedMb.map((l, i) => i === 0 ? l : l.slice(1)).join('') === multiByte, 'ICS folding round-trips multi-byte text');
 
+      // 30. Recurrence rules (daily / weekly / monthly / yearly, intervals, counts)
+      const rec = await import('./js/recurrence.js');
+      const rocc = (rule, from, key) => rec.ruleOccursOn(rule, from, key);
+      assert(rocc({ freq: 'DAILY', interval: 3 }, '2026-10-01', '2026-10-04') && !rocc({ freq: 'DAILY', interval: 3 }, '2026-10-01', '2026-10-05'), 'Every 3 days: Oct 4 yes, Oct 5 no');
+      assert(!rocc({ freq: 'DAILY' }, '2026-10-01', '2026-09-30'), 'Rules never occur before their start date');
+      const tuThBiweekly = { freq: 'WEEKLY', interval: 2, byDay: ['TU', 'TH'] };
+      assert(rocc(tuThBiweekly, '2026-10-05', '2026-10-06') && rocc(tuThBiweekly, '2026-10-05', '2026-10-08'), 'Every 2 weeks Tue+Thu: first week occurs');
+      assert(!rocc(tuThBiweekly, '2026-10-05', '2026-10-13') && !rocc(tuThBiweekly, '2026-10-05', '2026-10-15'), 'Every 2 weeks Tue+Thu: skipped week does not occur');
+      assert(rocc(tuThBiweekly, '2026-10-05', '2026-10-20') && rocc(tuThBiweekly, '2026-10-05', '2026-10-22'), 'Every 2 weeks Tue+Thu: third week occurs');
+      assert(rocc({ freq: 'WEEKLY', byDay: ['WE'] }, '2026-10-01', '2026-10-07') && !rocc({ freq: 'WEEKLY', byDay: ['WE'] }, '2026-10-01', '2026-10-08'), 'Old-style rule without interval still works (weekly)');
+      assert(rocc({ freq: 'MONTHLY', monthMode: 'day' }, '2026-01-31', '2026-03-31') && !rocc({ freq: 'MONTHLY', monthMode: 'day' }, '2026-01-31', '2026-02-28'), 'Monthly on day 31 skips months without a 31st');
+      assert(rocc({ freq: 'MONTHLY', monthMode: 'nth' }, '2026-10-21', '2026-11-18') && !rocc({ freq: 'MONTHLY', monthMode: 'nth' }, '2026-10-21', '2026-11-25'), 'Monthly on the 3rd Wednesday');
+      assert(rocc({ freq: 'MONTHLY', monthMode: 'last' }, '2026-10-28', '2026-11-25') && !rocc({ freq: 'MONTHLY', monthMode: 'last' }, '2026-10-28', '2026-11-18'), 'Monthly on the last Wednesday');
+      assert(rocc({ freq: 'MONTHLY', interval: 2, monthMode: 'day' }, '2026-10-05', '2026-12-05') && !rocc({ freq: 'MONTHLY', interval: 2, monthMode: 'day' }, '2026-10-05', '2026-11-05'), 'Every 2 months');
+      assert(rocc({ freq: 'YEARLY' }, '2026-10-05', '2027-10-05') && !rocc({ freq: 'YEARLY' }, '2026-10-05', '2027-10-06'), 'Yearly on the same date');
+      assert(rec.untilForCount({ freq: 'WEEKLY', byDay: ['WE'] }, '2026-10-07', 3) === '2026-10-21', 'Ends after 3 times: third Wednesday is the last day');
+      assert(rec.countUntil({ freq: 'WEEKLY', byDay: ['WE'] }, '2026-10-07', '2026-10-21') === 3, 'countUntil is the inverse of untilForCount');
+      assert(rec.firstOccurrence({ freq: 'WEEKLY', interval: 2, byDay: ['MO'] }, '2026-10-09') === '2026-10-19', 'First occurrence of a biweekly Monday series started on a Friday');
+      assert(rec.describeRule(tuThBiweekly, '2026-10-05') === 'Every 2 weeks on Tue, Thu', 'describeRule: every 2 weeks on Tue, Thu');
+      assert(rec.describeRule({ freq: 'MONTHLY', monthMode: 'nth' }, '2026-10-21') === 'Every month on the third Wednesday', 'describeRule: monthly on the third Wednesday');
+      assert(rec.ruleToRRule(tuThBiweekly, '2026-10-05') === 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=MO', 'RRULE for every 2 weeks Tue+Thu');
+      assert(rec.ruleToRRule({ freq: 'MONTHLY', monthMode: 'nth' }, '2026-10-21') === 'FREQ=MONTHLY;BYDAY=3WE', 'RRULE for monthly on the 3rd Wednesday');
+      assert(rec.ruleToRRule({ freq: 'MONTHLY', monthMode: 'last' }, '2026-10-28') === 'FREQ=MONTHLY;BYDAY=-1WE', 'RRULE for monthly on the last Wednesday');
+      assert(rec.ruleToRRule({ freq: 'MONTHLY', monthMode: 'day' }, '2026-10-05') === 'FREQ=MONTHLY;BYMONTHDAY=5', 'RRULE for monthly on a day number');
+      assert(rec.normalizeRule({ freq: 'bogus', interval: -4, byDay: ['XX'] }, '2026-10-21').freq === 'WEEKLY', 'normalizeRule repairs unknown rules');
+
+      // Store: create / convert / modify / duplicate / split recurring events
+      store.events = [{ id: 'single1', title: 'Gel run', dateKey: '2026-10-06', endDateKey: '2026-10-06', startTime: '10:00', endTime: '12:00', color: 'ocean', category: 'Bench Work' }];
+      store.series = [];
+      store.exceptions = [];
+      const mkSeries = (id, rule, extra = {}) => ({ id, title: 'Journal club', rule, startTime: '10:00', endTime: '12:00', from: '2026-10-06', until: null, color: 'emerald', category: 'Meeting', ...extra });
+      store.addSeries(mkSeries('sr_tt', { freq: 'WEEKLY', interval: 1, byDay: ['TU', 'TH'] }));
+      const twoWeeks = store.getExpandedEventsForRange(['2026-10-06', '2026-10-07', '2026-10-08', '2026-10-13', '2026-10-15']);
+      assert(twoWeeks.filter(e => e.seriesId === 'sr_tt').map(e => e.dateKey).join() === '2026-10-06,2026-10-08,2026-10-13,2026-10-15', 'New Tue+Thu series expands onto Tuesdays and Thursdays only');
+      store.convertEventToSeries('single1', mkSeries('sr_conv', { freq: 'DAILY', interval: 1 }, { title: 'Gel run' }));
+      assert(!store.events.some(e => e.id === 'single1') && store.series.some(s => s.id === 'sr_conv'), 'Making a single event recurring replaces it with a series');
+      store.undo?.();
+      assert(store.events.some(e => e.id === 'single1') && !store.series.some(s => s.id === 'sr_conv'), 'Making an event recurring is one undo step');
+
+      store.duplicateSeriesOccurrence('sr_tt', '2026-10-08', 'this');
+      const dupEvt = store.events.find(e => e.title === 'Journal club (Copy)');
+      assert(dupEvt && dupEvt.dateKey === '2026-10-08' && dupEvt.startTime === '12:00' && dupEvt.endTime === '14:00' && !dupEvt.seriesId, 'Duplicating one occurrence makes a single copy right after it');
+      store.duplicateSeriesOccurrence('sr_tt', '2026-10-08', 'all');
+      const dupSeries = store.series.find(s => s.title === 'Journal club (Copy)');
+      assert(dupSeries && dupSeries.id !== 'sr_tt' && dupSeries.startTime === '12:00' && dupSeries.rule.byDay.join() === 'TU,TH', 'Duplicating the whole series copies the rule');
+
+      const seriesBefore = store.series.length;
+      assert(store.splitSeriesOccurrence('sr_tt', '2026-10-13', 'this') === true, 'Splitting one occurrence succeeds');
+      assert(!store.getExpandedEventsForRange(['2026-10-13']).some(e => e.seriesId === 'sr_tt'), 'Split occurrence no longer shows as part of the series');
+      const parts = store.events.filter(e => e.dateKey === '2026-10-13' && e.title.startsWith('Journal club') && !e.title.includes('Copy'));
+      assert(parts.length === 2 && parts[0].endTime === parts[1].startTime && parts[0].startTime === '10:00' && parts[1].endTime === '12:00', 'Split occurrence becomes two single events covering the original time');
+      store.splitSeriesOccurrence('sr_tt', '2026-10-15', 'all');
+      const partB = store.series.find(s => s.title === 'Journal club (Part B)');
+      assert(store.series.length === seriesBefore + 1 && store.findSeries('sr_tt').endTime === '11:00' && partB.startTime === '11:00' && partB.endTime === '12:00', 'Splitting the whole series makes a second series for the second half');
+
+      // Changing the rule for this and following events + end after N times
+      store.series = [mkSeries('sr_w', { freq: 'WEEKLY', interval: 1, byDay: ['TU'] })];
+      store.exceptions = [];
+      store.modifySeriesOccurrence('sr_w', '2026-10-13', { rule: { freq: 'WEEKLY', interval: 2, byDay: ['TU', 'TH'] }, endCount: 4 }, 'following');
+      const newPart = store.series.find(s => s.id !== 'sr_w');
+      assert(store.series[0].until === '2026-10-12' && newPart.from === '2026-10-13' && newPart.rule.interval === 2, 'Changing rule for "following" ends the old series and starts a new one');
+      assert(newPart.until === '2026-10-29', 'End after 4 times is stored as an end date (Oct 13, 15, 27, 29)');
+      store.modifySeriesOccurrence(newPart.id, '2026-10-13', { rule: { freq: 'MONTHLY', interval: 1, monthMode: 'day' }, until: null }, 'all');
+      assert(newPart.rule.freq === 'MONTHLY' && newPart.until === null, 'Rule and end can be changed for all events');
+      store.modifySeriesOccurrence(newPart.id, '2026-11-13', { dateKey: '2026-11-14' }, 'all');
+      assert(newPart.from === '2026-10-14', 'Moving all occurrences of a monthly series moves its start date');
+
+      // ICS export of the new rules
+      const icsMonthly = (await import('./js/storage.js')).buildIcsContent([], [mkSeries('im', { freq: 'MONTHLY', monthMode: 'nth' }, { from: '2026-10-21' })], []);
+      assert(icsMonthly.includes('RRULE:FREQ=MONTHLY;BYDAY=3WE') && icsMonthly.includes('DTSTART:20261021T100000'), 'ICS: monthly on the 3rd Wednesday');
+
       summaryEl.textContent = `All Tests Completed: ${passed} passed, ${failed} failed.`;
       summaryEl.style.color = failed === 0 ? '#137333' : '#c5221f';
       window.__TESTS_PASSED__ = (failed === 0);
