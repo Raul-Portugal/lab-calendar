@@ -37,25 +37,34 @@ language, and describe what to check in the app afterwards.
   `<\/script>`). Tests run on an isolated storage key; never touch `lab_calendar_data_v2`.
 - **New static file** (CSS/JS/icon): add it to `STATIC_ASSETS` in `sw.js` and bump `CACHE_NAME`.
 
-## Windows shell quirks (this machine)
-
-- Git may not be on PATH in a fresh PowerShell: run
-  `$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')` first.
-- Multi-line commit messages: write the message to a file in the scratchpad and use
-  `git commit -F <file>` (PowerShell here-strings get mangled).
-- Don't rewrite files with `Set-Content` / `Out-File` (they add a BOM or change encoding);
-  use the Edit/Write tools, or .NET `WriteAllText` with UTF-8 without BOM.
-
 ## Git workflow
 
 - One branch per task, created from an up-to-date `main`; small commits with clear messages.
-- **Ask before every `git push`.** Pushing works non-interactively with `$env:GCM_INTERACTIVE='never'`
-  (credentials are stored). There is no `gh` CLI: after pushing, give the owner the
+- **Ask before every `git push`.** After pushing, give the owner the
   `https://github.com/Raul-Portugal/lab-calendar/pull/new/<branch>` link and a PR description to
-  paste. The owner reviews and merges; Pages deploys `main` automatically.
-- Repo git identity is set locally (GitHub noreply email); don't change it.
+  paste (if the `gh` CLI isn't available). The owner reviews and merges; Pages deploys `main`
+  automatically.
+- Don't change the repo's git identity (user.name / user.email).
+- Machine-specific notes (shell quirks, how pushing works on a given PC) belong in
+  `CLAUDE.local.md`, which is not committed.
+
+## Keeping the docs current
+
+Part of every change, in the same branch, not a later task:
+
+- **README.md**: update the feature list / shortcuts table when a user-facing feature is added,
+  changed or removed.
+- **docs/ROADMAP.md**: move finished items to "Done" (with the PR number once known); add newly
+  discovered limits or ideas instead of only mentioning them in chat.
+- **docs/protocol-import-llm-instructions.md** + example JSON: whenever the protocol file format
+  or its validation (`sanitizeProtocol`) changes. The example must still import unchanged.
+- **CLAUDE.md**: add a rule only when a mistake would otherwise be likely (a new invariant,
+  command or gotcha); remove rules that no longer apply. Keep it under ~100 lines; put
+  step-by-step procedures in `.claude/skills/` instead.
+- **test.html**: new logic gets tests; changed behaviour updates the old tests.
 
 ## More
 
-- Planned improvements and ideas: `docs/ROADMAP.md` (update it when an item is done).
+- Planned improvements and ideas: `docs/ROADMAP.md`.
 - Protocol file format for LLM-generated protocols: `docs/protocol-import-llm-instructions.md`.
+- Procedures: `/verify` (tests + browser checks), `/ship` (commit, ask, push, PR link).
